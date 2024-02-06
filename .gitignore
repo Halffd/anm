@@ -11,3 +11,5 @@ yarn-error.log
 *.njsproj
 *.sln
 *.zip
+.history
+.tmp.driveupload

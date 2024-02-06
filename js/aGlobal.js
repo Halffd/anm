@@ -341,17 +341,6 @@ function token_to_dict(token, tok = false, furi = false, dicts = false, short = 
         // console.log(token_dict);
 
         if (!dicts) {
-            let t = null;
-            if (recursive) {
-                const tks = tokenizer.tokenize(token.basic_form, mD);
-                if (tks.length > 0) {
-                    t = token_to_dict(tks[0], true);
-                    token_dict["read"] = t["reading"];
-                    token_dict["token"] = t;
-                    token_dict["romaji"] = [roma, t["romaji"]];
-                }
-            }
-
             if (furi) {
                 let tt = token.surface_form ?? token.basic_form ?? hiragana_reading ?? token.reading
                 const kanji_pattern = /[\u4e00-\u9faf]/;
@@ -362,7 +351,7 @@ function token_to_dict(token, tok = false, furi = false, dicts = false, short = 
                 } else if (short) {
                     fg = [tt, hiragana_reading];
                 } else {
-                    fg = [tt, hiragana_reading, t ? t["reading"] : ""];
+                    fg = [tt, hiragana_reading, token];
                 }
                 return fg;
             }
