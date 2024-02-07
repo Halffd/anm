@@ -233,7 +233,7 @@ async function analyse(text, mode = 'A', nom = false) {
  */
 async function makeFurigana(text, mode = 'A') {
     if (tokenizer instanceof Promise) {
-        tokenizer = await initializeTokenizer()
+       // tokenizer = await initializeTokenizer()
     }
     // mode = modes(mode || "A");
 

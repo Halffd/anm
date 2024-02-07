@@ -301,7 +301,7 @@ function createApp() {
                         return null;
                     }
                     this.captions = captions;
-
+                    console.log(captions);
                     this.furigana()
                     var uri = "data:text/vtt;charset=utf-8," + encodeURIComponent(vtt)
                     this.shouldShowSubtitlesError = false;
@@ -1653,21 +1653,76 @@ function createApp() {
 
                 return lines.join("\n\n");
             },
-            furigana: async function () {
-                console.log(this.captions);
-                for (let i in this.captions) {
-                    let text = this.captions[i].text
-                    let arr = await makeFurigana(text)
-                    this.captions[i].text = `<ruby>`
-                    for (let t of arr) {
-                        let kj = typeof t === 'object' ? t[0] : t
-                        let kn = typeof t === 'object' ? t[1] : ''
-                        kn = kj == kn ? '' : kn
-                        this.captions[i].text += `${kj}<rt>${kn}</rt>`
+            ruby: function (arr, i) {
+                this.captions[i].text = "";
+                
+                for (let t of arr) {
+                    try {
+                        //this.captions[i].text += "<ruby>";
+                        let kj = typeof t === "object" ? t[0] : t;
+                        let kn = typeof t === "object" ? t[1] : "";
+                        kn = kj == kn ? "" : kn;
+                        let kja = kj.split('')
+                        let j = 1
+                        let kna = kn.split('')
+                        let ka = []
+                        for (let i = 1; i < kja.length; i++) {
+                            const k = kja[kja.length-i];
+                            const n = kna[kna.length-j]
+                            if(k == n){
+                                let e = kja.splice(kja.length-i, 1)
+                                kna.splice(kna.length-j,1)
+                                i -= 1
+                                j -= 1
+                                ka = [e, ...ka]
+                            } else {
+                                break
+                            }
+                            j += 1
+                        }
+                        if(typeof t === 'object'){
+                            kn = `<rt>${kna.join('')}</rt>`
+                            kj = `<ruby>${kja.join('')}${kn}</ruby>${ka.join('')}`
+                        }
+                        this.captions[i].text += kj;
+                        //this.captions[i].text += "</ruby>";
+                    } catch (e) {
+                        console.error(e);
                     }
-                    this.captions[i].text += `</ruby>`
-                    console.log(i, text, this.captions[i]);
                 }
+
+                console.log(i, this.captions[i]);
+            },
+            furigana: async function (limit = 50) {
+                console.log(limit, this.captions);
+                tokenizer = await initializeTokenizer()
+                const promises = [];
+                for (let i in this.captions) {
+                    try {
+                        const text = this.captions[i].text;
+                        console.log(i, promises.length);
+                        const promise = makeFurigana(text)
+                        .then((arr) => {
+                          this.ruby(arr, i);
+                        })
+                        .catch((error) => {
+                          console.error('Error in makeFurigana:', error);
+                        });
+
+                      //  promises.push(promise);
+
+                        // Check if the number of promises exceeds 50
+                        if (promises.length >= limit) {
+                        //    await Promise.all(promises);
+                        //    promises.length = 0; // Clear the promises array
+                        }
+                    } catch (e) {
+                        console.error(e);
+                    }
+                }
+
+                // Wait for any remaining promises to resolve
+                // await Promise.all(promises);
             },
             fileToCaptions: function (text, offset, customOffsets) {
                 var parsed = this.vttToCaptions(text) || this.assToCaptions(text) || this.srtToCaptions(text);
@@ -1702,7 +1757,6 @@ function createApp() {
                 this.assignCaptionsToLanes(parsed);
                 if (this.shouldHideRegexMatches)
                     this.hideRegexMatches(parsed);
-                console.warn(parsed);
                 console.warn(parsed);
                 return parsed;
             },
