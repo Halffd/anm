@@ -28,7 +28,7 @@
     },
     "content_scripts": [
         {
-            "matches": ["file://*/*", "*://*.animebook.github.io/*", "*://*/animebook.*", "*://*/animebook", "*localhost:*", "*127.*", "*196.*"],
+            "matches": ["<all_urls>"],
             "js": [
                 "fg/event_channel.js", 
                 "fg/toast.js", 

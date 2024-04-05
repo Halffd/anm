@@ -75,7 +75,7 @@ function createApp() {
         ]
     }
     Vue.component('caption-item', {
-        props: ['caption', 'secondaryCaption', 'customOffsets', 'isAutoPauseMode', 'isOffsetMode', 'currentTime'],
+        props: ['caption', 'customOffsets', 'isAutoPauseMode', 'isOffsetMode', 'currentTime'],
         methods: {
             offsetTooNegative: function (caption) {
                 var inputOffset = Utils.parseInputNum(this.customOffsets[caption.id]);
@@ -171,13 +171,12 @@ function createApp() {
                     </span>
                   </span>
                 </span>
-                <span class="secondary-caption-text" v-html="displaySidebarCaption(secondaryCaption.text)"></span>
               </span>
               `
     })
 
     Vue.component('caption-bar', {
-        props: ['captions', 'secondaryCaption', 'customOffsets', 'isAutoPauseMode', 'isOffsetMode', 'currentTime'],
+        props: ['captions', 'customOffsets', 'isAutoPauseMode', 'isOffsetMode', 'currentTime'],
         methods: {
             selectCaption: function (caption, offset) {
                 this.$emit('select-caption', caption, offset)
@@ -214,19 +213,6 @@ function createApp() {
                 :currentTime="bufferTime"
                 ></caption-item>
               </span>
-              <span v-for="(caption, index) in secondaryCaptions" :key="caption.id">
-                <caption-item
-                    :caption="caption"
-                    :secondaryCaption="secondaryCaption"
-                    :customOffsets="customOffsets"
-                    :isAutoPauseMode="isAutoPauseMode"
-                    :isOffsetMode="isOffsetMode"
-                    :currentTime="currentTime"
-                    :index="index"
-                    @select-caption="selectCaption"
-                    @set-custom-offset="setCustomOffset"
-              ></caption-item>
-            </span>
             </div>
           </div>
         </div>
@@ -254,7 +240,6 @@ function createApp() {
             sideBarX: 0.86,
             previousSideBarX: 0.86,
             captions: [],
-            secondaryCaptions: [],
             isDraggingFile: false,
             isOffsetMode: false,
             resizeBarClick: null,
@@ -1670,7 +1655,7 @@ function createApp() {
             },
             ruby: function (arr, i) {
                 this.captions[i].text = "";
-
+                
                 for (let t of arr) {
                     try {
                         //this.captions[i].text += "<ruby>";
@@ -1682,11 +1667,11 @@ function createApp() {
                         let kna = kn.split('')
                         let ka = []
                         for (let i = 1; i < kja.length; i++) {
-                            const k = kja[kja.length - i];
-                            const n = kna[kna.length - j]
-                            if (k == n) {
-                                let e = kja.splice(kja.length - i, 1)
-                                kna.splice(kna.length - j, 1)
+                            const k = kja[kja.length-i];
+                            const n = kna[kna.length-j]
+                            if(k == n){
+                                let e = kja.splice(kja.length-i, 1)
+                                kna.splice(kna.length-j,1)
                                 i -= 1
                                 j -= 1
                                 ka = [e, ...ka]
@@ -1695,7 +1680,7 @@ function createApp() {
                             }
                             j += 1
                         }
-                        if (typeof t === 'object') {
+                        if(typeof t === 'object'){
                             kn = `<rt>${kna.join('')}</rt>`
                             kj = `<ruby>${kja.join('')}${kn}</ruby>${ka.join('')}`
                         }
@@ -1717,19 +1702,19 @@ function createApp() {
                         const text = this.captions[i].text;
                         console.log(i, promises.length);
                         const promise = makeFurigana(text)
-                            .then((arr) => {
-                                this.ruby(arr, i);
-                            })
-                            .catch((error) => {
-                                console.error('Error in makeFurigana:', error);
-                            });
+                        .then((arr) => {
+                          this.ruby(arr, i);
+                        })
+                        .catch((error) => {
+                          console.error('Error in makeFurigana:', error);
+                        });
 
-                        //  promises.push(promise);
+                      //  promises.push(promise);
 
                         // Check if the number of promises exceeds 50
                         if (promises.length >= limit) {
-                            //    await Promise.all(promises);
-                            //    promises.length = 0; // Clear the promises array
+                        //    await Promise.all(promises);
+                        //    promises.length = 0; // Clear the promises array
                         }
                     } catch (e) {
                         console.error(e);
