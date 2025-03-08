@@ -3,7 +3,8 @@ extension/bg/node_modules/
 npm-debug.log
 yarn-error.log
 .vscode
-
+old
+node_modules
 # Editor directories and files
 .idea
 *.suo
@@ -13,3 +14,9 @@ yarn-error.log
 *.zip
 .history
 .tmp.driveupload
+.output
+.data
+.nuxt
+.nitro
+.cache
+dist
