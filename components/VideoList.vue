@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 
 interface VideoInfo {
   name: string
@@ -29,7 +29,16 @@ async function loadVideos(path: string = '') {
     const response = await $fetch('/api/videos', {
       params: { path }
     })
-    videos.value = response.videos
+    // Sort directories and files alphabetically
+    const sortedVideos = response.videos.sort((a, b) => {
+      // First sort by type (directories first)
+      if (a.isDirectory !== b.isDirectory) {
+        return a.isDirectory ? -1 : 1
+      }
+      // Then sort alphabetically by name
+      return a.name.localeCompare(b.name)
+    })
+    videos.value = sortedVideos
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Failed to load videos'
     console.error('Error loading videos:', e)
@@ -97,7 +106,26 @@ function playSelected() {
 
 onMounted(() => {
   loadVideos()
+
+  // Add keyboard event listeners
+  window.addEventListener('keydown', handleKeyDown)
 })
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', handleKeyDown)
+})
+
+function handleKeyDown(e: KeyboardEvent) {
+  // Enter key plays selected videos
+  if (e.key === 'Enter' && selectedVideos.value.size > 0) {
+    playSelected()
+  }
+  // 'a' key with ctrl selects all videos
+  if (e.key === 'a' && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault() // Prevent default browser select all
+    selectAll()
+  }
+}
 </script>
 
 <template>
@@ -223,6 +251,30 @@ onMounted(() => {
         </div>
       </div>
     </div>
+
+    <!-- Fixed play button at bottom -->
+    <div 
+      v-if="videos.length > 0" 
+      class="fixed bottom-0 left-0 right-0 p-4 bg-gray-900 border-t border-gray-800 flex justify-center items-center gap-4"
+    >
+      <div class="text-sm text-gray-400">
+        <span v-if="selectedVideos.size > 0">{{ selectedVideos.size }} selected</span>
+        <span v-else>No videos selected</span>
+      </div>
+      
+      <button 
+        class="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+        @click="playSelected"
+        :disabled="selectedVideos.size === 0"
+      >
+        Play Selected
+      </button>
+      
+      <div class="text-sm text-gray-400">
+        Press <kbd class="px-1 py-0.5 bg-gray-800 rounded">Enter</kbd> to play
+        • <kbd class="px-1 py-0.5 bg-gray-800 rounded">Ctrl</kbd> + <kbd class="px-1 py-0.5 bg-gray-800 rounded">A</kbd> to select all
+      </div>
+    </div>
   </div>
 </template>
 
@@ -231,5 +283,6 @@ onMounted(() => {
   max-width: 800px;
   margin: 0 auto;
   padding: 1rem;
+  padding-bottom: calc(1rem + 80px); /* Add padding for fixed bottom bar */
 }
 </style> 
