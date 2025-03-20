@@ -337,16 +337,22 @@ onMounted(() => {
     }
   }, 5000) // Save every 5 seconds
 
+  const SPACE_DELAY = 300 // Increase delay between space presses to 300ms
+
+  // Update keyboard shortcuts
   useKeyboardShortcuts({
-    ' ': () => togglePlay(),
+    ' ': (e) => {
+      e.preventDefault() // Prevent page scroll
+      togglePlay()
+    },
     'ArrowLeft': () => skipTime(-3),
     'ArrowRight': () => skipTime(3),
     'a': () => store.previousCaption(),
     'd': () => store.nextCaption(),
     's': () => store.seekToSubtitleStart(),
-    'ArrowDown': () => store.seekToSubtitleStart(),
-    'w': () => store.toggleSubtitles(),
-    'ArrowUp': () => store.toggleSubtitles(),
+    'ArrowDown': () => skipTime(-3), // Change to match left/right behavior
+    'ArrowUp': () => skipTime(3), // Change to match left/right behavior
+    'w': () => skipTime(3), // Match ArrowUp
     'l': () => openSubtitleFileDialog(),
     'j': () => togglePrimarySecondary(),
     'p': () => store.isAutoPauseMode = false,
@@ -439,7 +445,6 @@ defineExpose({
 
 // Video control functions
 let lastSpaceTime = 0
-const SPACE_DELAY = 200 // 200ms delay between space presses
 
 function togglePlay() {
   const video = videoRef.value
@@ -645,7 +650,7 @@ function togglePrimarySecondary() {
     <video
       ref="videoRef"
       :src="streamingUrl"
-      :controls="settings.showVideoControls"
+      :controls="false"
       @timeupdate="onTimeUpdate"
       @loadedmetadata="onMetadataLoaded"
       @play="onPlay"
@@ -659,111 +664,11 @@ function togglePrimarySecondary() {
       Your browser does not support the video tag.
     </video>
 
-    <!-- Audio track indicator -->
-    <div 
-      v-if="audioTracks.length > 1"
-      class="fixed top-4 right-4 bg-black/50 px-3 py-2 rounded text-white text-sm z-40"
-    >
-      Audio: {{ selectedAudioTrack + 1 }}/{{ audioTracks.length }}
-    </div>
-
-    <!-- Subtitle tracks indicator with video info -->
-    <div 
-      v-if="showSubtitleInfo"
-      class="fixed top-4 left-4 bg-black/50 p-3 rounded text-white text-sm z-40 max-w-md"
-    >
-      <h3 class="font-semibold mb-1">{{ videoTitle }}</h3>
-      <div class="text-gray-300 text-xs mb-2">
-        {{ formatDuration(videoDuration) }}
-        <span v-if="audioTracks.length > 1"> • {{ audioTracks.length }} Audio Tracks</span>
-      </div>
-      <div v-if="store.subtitleTracks.length > 0" class="border-t border-gray-700 pt-2">
-        <div>Subtitles: {{ store.activeTrackIndex + 1 }}/{{ store.subtitleTracks.length }}</div>
-        <div v-if="store.activeTrack?.metadata" class="text-xs mt-1 text-gray-300">
-          {{ store.activeTrack.metadata.language }}: {{ store.activeTrack.metadata.title }}
-        </div>
-      </div>
-    </div>
-
-    <!-- All subtitle tracks -->
-    <div 
-      v-if="hasSubtitles"
-      class="subtitles-container"
-      :style="{
-        fontSize: `calc(${settings.primarySubtitleFontSize} * 1.5rem)`
-      }"
-    >
-      <div class="subtitle-stack">
-        <!-- Active track first -->
-        <div class="subtitle-track active-track">
-          <div
-            v-for="caption in store.activeCaptions.filter(c => 
-              c.startTime <= props.currentTime && props.currentTime <= c.endTime
-            )"
-            :key="`active-${caption.id}`"
-            class="subtitle-line primary-track"
-            :class="[
-              `lane-${caption.lane || 0}`,
-              processText(caption.text).position || 'middle'
-            ]"
-          >
-            <template v-if="caption.furigana && store.showFurigana">
-              <span class="furigana-container" v-html="
-                caption.furigana.map(([text, reading]) => {
-                  const processed = processText(text);
-                  if (/^[\s\p{P}]+$/u.test(processed.text)) {
-                    return processed.text;
-                  } else if (/[\u4E00-\u9FAF\u3400-\u4DBF]/.test(processed.text) && reading && reading !== processed.text) {
-                    return `<ruby>${processed.text}<rt>${reading}</rt></ruby>`;
-                  } else {
-                    return processed.text;
-                  }
-                }).join('')
-              "></span>
-            </template>
-            <template v-else-if="caption.tokens && (settings.colorizeWords || (settings.autoColorizeJapanese && isJapaneseText(caption.text)))">
-              <span class="tokens-container">
-                <ColoredWord
-                  v-for="(token, index) in processTokens(caption.tokens)"
-                  :key="`${caption.id}-token-${index}`"
-                  :text="processText(token.surface_form).text"
-                  :reading="token.reading"
-                  :pos="token.pos"
-                />
-              </span>
-            </template>
-            <template v-else>
-              <span v-html="processText(caption.text).text"></span>
-            </template>
-          </div>
-        </div>
-        
-        <!-- Secondary subtitles directly in stack -->
-        <div
-          v-for="(track, trackIndex) in store.subtitleTracks.filter((_, i) => i !== store.activeTrackIndex)"
-          :key="`track-${trackIndex}`"
-          class="subtitle-track"
-        >
-          <div
-            v-for="caption in track.captions.filter(c => 
-              c.startTime <= props.currentTime && props.currentTime <= c.endTime
-            )"
-            :key="`${track.metadata.language}-${caption.id}`"
-            class="subtitle-line secondary-track"
-            :class="`lane-${caption.lane || 0}`"
-            v-show="store.showSecondarySubtitles"
-          >
-            <span v-html="processText(caption.text).text"></span>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Custom controls -->
+    <!-- Custom controls - always show -->
     <div class="custom-controls">
       <div class="flex items-center gap-2">
         <button class="control-button" @click="togglePlay">
-          <span v-if="isPlaying">⏸</span>
+          <span v-if="!videoRef?.paused">⏸</span>
           <span v-else>▶</span>
         </button>
         
@@ -773,7 +678,7 @@ function togglePrimarySecondary() {
         
         <div class="flex-1">
           <div class="progress-bar" ref="progressBar" @click="onProgressClick">
-            <div class="progress-fill" :style="{ width: `${progress}%` }"></div>
+            <div class="progress-fill" :style="{ width: `${(currentTime / videoDuration) * 100}%` }"></div>
             <div class="progress-hover"></div>
           </div>
         </div>
