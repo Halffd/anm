@@ -812,8 +812,13 @@ function togglePrimarySecondary() {
   flex-direction: column;
   align-items: center;
   pointer-events: none;
-  z-index: 30;
   user-select: none;
+  z-index: 30;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  outline: none;
+  tabindex: -1;
 }
 
 /* Remove duplicate video-info class */
@@ -865,7 +870,13 @@ function togglePrimarySecondary() {
   flex-direction: column;
   align-items: center;
   pointer-events: none;
+  user-select: none;
   z-index: 30;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  outline: none;
+  tabindex: -1;
 }
 
 .subtitle-stack {
@@ -905,6 +916,12 @@ function togglePrimarySecondary() {
     0 0 15px rgba(0,0,0,0.5);
   word-wrap: break-word;
   word-break: normal;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  outline: none;
 }
 
 .primary-track {
