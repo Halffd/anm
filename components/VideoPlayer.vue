@@ -50,6 +50,11 @@ const selectedAudioTrack = ref<number>(0)
 const playbackRate = ref(1)
 const showSubtitleInfo = ref(false)
 const isHovering = ref(false)
+const showSubtitleList = ref(true)
+
+// Add new refs for video details
+const videoDuration = ref(0)
+const videoTitle = ref('')
 
 // Update hasSubtitles to use allActiveCaptions instead of activeCaptions
 const hasSubtitles = computed(() => store.showSubtitles && store.allActiveCaptions.length > 0)
@@ -334,18 +339,20 @@ onMounted(() => {
 
   useKeyboardShortcuts({
     ' ': () => togglePlay(),
-    'ArrowLeft': () => store.previousCaption(),
-    'ArrowRight': () => store.nextCaption(),
+    'ArrowLeft': () => skipTime(-3),
+    'ArrowRight': () => skipTime(3),
     'a': () => store.previousCaption(),
     'd': () => store.nextCaption(),
     's': () => store.seekToSubtitleStart(),
     'ArrowDown': () => store.seekToSubtitleStart(),
-    'w': () => store.toggleAutoPause(),
-    'ArrowUp': () => store.toggleAutoPause(),
+    'w': () => store.toggleSubtitles(),
+    'ArrowUp': () => store.toggleSubtitles(),
+    'l': () => openSubtitleFileDialog(),
+    'j': () => togglePrimarySecondary(),
     'p': () => store.isAutoPauseMode = false,
     'c': () => store.toggleSecondarySubtitles(),
     'v': () => store.toggleSubtitles(),
-    'V': () => store.toggleSubtitles(), // Shift+V
+    'V': () => store.toggleSubtitles(),
     'f': () => store.toggleFurigana(),
     'g': () => settings.colorizeWords = !settings.colorizeWords,
     'i': () => store.toggleSidebar(),
@@ -533,6 +540,95 @@ function onProgressClick(event: MouseEvent) {
   const pos = (event.clientX - rect.left) / rect.width
   videoRef.value.currentTime = pos * videoRef.value.duration
 }
+
+// Add metadata loaded handler
+function onMetadataLoaded() {
+  if (!videoRef.value) return
+  videoDuration.value = videoRef.value.duration
+  // Extract title from path
+  videoTitle.value = decodeURIComponent(props.videoUrl.split('/').pop() || '')
+}
+
+// Format duration helper
+function formatDuration(seconds: number): string {
+  const hours = Math.floor(seconds / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
+  const secs = Math.floor(seconds % 60)
+  
+  if (hours > 0) {
+    return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
+  }
+  return `${minutes}:${secs.toString().padStart(2, '0')}`
+}
+
+// Add subtitle file input
+const subtitleFileInput = ref<HTMLInputElement>()
+
+function openSubtitleFileDialog() {
+  if (!subtitleFileInput.value) {
+    // Create file input if it doesn't exist
+    subtitleFileInput.value = document.createElement('input')
+    subtitleFileInput.value.type = 'file'
+    subtitleFileInput.value.accept = '.srt,.vtt,.ass'
+    subtitleFileInput.value.style.display = 'none'
+    subtitleFileInput.value.addEventListener('change', handleSubtitleFile)
+    document.body.appendChild(subtitleFileInput.value)
+  }
+  subtitleFileInput.value.click()
+}
+
+async function handleSubtitleFile(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+
+  try {
+    // Read file content
+    const content = await file.text()
+    
+    // Extract language and title from filename
+    const filenameParts = file.name.split('.')
+    const extension = filenameParts.pop()?.toLowerCase()
+    const nameParts = filenameParts.join('.').split('_')
+    
+    let language = 'unknown'
+    let title = file.name
+    
+    if (nameParts.length >= 3) {
+      // Assume format is filename_language_title
+      language = nameParts[nameParts.length - 2]
+      title = nameParts[nameParts.length - 1]
+    } else if (filenameParts.length >= 2) {
+      // Try format filename.language.ext
+      language = filenameParts[filenameParts.length - 1]
+      title = filenameParts[0]
+    }
+    
+    // Load captions
+    const trackIndex = await store.loadCaptions(content, language, title)
+    
+    if (trackIndex !== null) {
+      emit('notify', `Added subtitle track: ${file.name}`)
+    } else {
+      emit('notify', 'Failed to parse subtitle file')
+    }
+  } catch (e) {
+    emit('notify', `Failed to load subtitle: ${e instanceof Error ? e.message : 'Unknown error'}`)
+  }
+
+  // Reset input
+  input.value = ''
+}
+
+// Add function to toggle between primary and secondary subtitles
+function togglePrimarySecondary() {
+  if (store.subtitleTracks.length <= 1) {
+    emit('notify', 'No secondary subtitles available')
+    return
+  }
+  store.cycleActiveTrack()
+  emit('notify', `Active subtitle: ${store.activeTrack?.metadata?.title || 'Unknown'}`)
+}
 </script>
 
 <template>
@@ -551,12 +647,14 @@ function onProgressClick(event: MouseEvent) {
       :src="streamingUrl"
       :controls="settings.showVideoControls"
       @timeupdate="onTimeUpdate"
+      @loadedmetadata="onMetadataLoaded"
       @play="onPlay"
       @pause="onPause"
       @seeking="onSeeking"
       @seeked="onSeeked"
       @mouseover="isHovering = true"
       @mouseleave="isHovering = false"
+      class="video-element"
     >
       Your browser does not support the video tag.
     </video>
@@ -569,14 +667,21 @@ function onProgressClick(event: MouseEvent) {
       Audio: {{ selectedAudioTrack + 1 }}/{{ audioTracks.length }}
     </div>
 
-    <!-- Subtitle tracks indicator - toggleable with showSubtitleInfo -->
+    <!-- Subtitle tracks indicator with video info -->
     <div 
       v-if="showSubtitleInfo && store.subtitleTracks.length > 1"
-      class="fixed top-12 right-4 bg-black/50 px-3 py-2 rounded text-white text-sm z-40"
+      class="fixed top-4 left-4 bg-black/50 p-3 rounded text-white text-sm z-40 max-w-md"
     >
-      <div>Subtitles: {{ store.activeTrackIndex + 1 }}/{{ store.subtitleTracks.length }}</div>
-      <div v-if="store.activeTrack?.metadata" class="text-xs mt-1">
-        {{ store.activeTrack.metadata.language }}: {{ store.activeTrack.metadata.title }}
+      <h3 class="font-semibold mb-1">{{ videoTitle }}</h3>
+      <div class="text-gray-300 text-xs mb-2">
+        {{ formatDuration(videoDuration) }}
+        <span v-if="audioTracks.length > 1"> • {{ audioTracks.length }} Audio Tracks</span>
+      </div>
+      <div class="border-t border-gray-700 pt-2">
+        <div>Subtitles: {{ store.activeTrackIndex + 1 }}/{{ store.subtitleTracks.length }}</div>
+        <div v-if="store.activeTrack?.metadata" class="text-xs mt-1 text-gray-300">
+          {{ store.activeTrack.metadata.language }}: {{ store.activeTrack.metadata.title }}
+        </div>
       </div>
     </div>
 
@@ -588,7 +693,6 @@ function onProgressClick(event: MouseEvent) {
         fontSize: `calc(${settings.primarySubtitleFontSize} * 1.5rem)`
       }"
     >
-      <!-- Stack all captions from all tracks -->
       <div class="subtitle-stack">
         <!-- Active track first -->
         <div class="subtitle-track active-track">
@@ -676,20 +780,74 @@ function onProgressClick(event: MouseEvent) {
         </button>
       </div>
     </div>
+
+    <!-- Add keyboard shortcuts to help text -->
+    <div class="keyboard-shortcuts text-sm text-gray-400 mt-2">
+      <div class="grid grid-cols-2 gap-2">
+        <div>Left/Right: Seek ±3s</div>
+        <div>A/D: Previous/Next subtitle</div>
+        <div>W or Up: Toggle subtitles</div>
+        <div>S or Down: Seek to subtitle start</div>
+        <div>L: Load subtitle file</div>
+        <div>J: Switch primary/secondary</div>
+      </div>
+    </div>
   </div>
 </template>
 
 <style scoped>
+/* Update video container styles */
 .video-container {
   position: relative;
   width: 100%;
-  height: 100%;
-  min-height: 100dvh;
+  height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;
   background: black;
   overflow: hidden;
+}
+
+/* Update subtitle container to not interfere with video */
+.subtitles-container {
+  position: fixed;
+  bottom: 10vh;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 90%;
+  max-width: 1200px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  pointer-events: none;
+  z-index: 30;
+  user-select: none;
+}
+
+/* Remove duplicate video-info class */
+.video-info {
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+/* Ensure video element takes full space */
+.video-element {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  outline: none;
+}
+
+/* Update media query for mobile */
+@media (max-width: 768px) {
+  .video-container {
+    height: calc(100vh - 120px); /* Adjust for smaller screens */
+  }
+  
+  .subtitles-container {
+    bottom: 5vh;
+  }
 }
 
 .video-container.controls-hidden video::-webkit-media-controls {
@@ -702,13 +860,6 @@ function onProgressClick(event: MouseEvent) {
 
 .video-container.controls-hidden video::-webkit-media-controls-panel {
   display: none !important;
-}
-
-.video-element {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  outline: none; /* Remove focus outline */
 }
 
 .subtitles-container {
@@ -808,22 +959,6 @@ function onProgressClick(event: MouseEvent) {
 
 .has-subtitles .video-element {
   margin-bottom: 20vh;
-}
-
-@media (max-width: 768px) {
-  .subtitles-container {
-    font-size: calc(1rem * var(--subtitle-scale, 1));
-    bottom: 5vh;
-  }
-
-  .subtitle-line {
-    font-size: 1.2rem;
-  }
-
-  .secondary-track {
-    font-size: 1rem;
-    padding: 0.2em 0.4em;
-  }
 }
 
 .furigana-container {
@@ -931,5 +1066,12 @@ function onProgressClick(event: MouseEvent) {
   bottom: -8px;
   left: 0;
   right: 0;
+}
+
+.keyboard-shortcuts {
+  padding: 0.5rem 1rem;
+  background: rgba(0, 0, 0, 0.5);
+  border-radius: 0.5rem;
+  margin-top: 1rem;
 }
 </style> 
