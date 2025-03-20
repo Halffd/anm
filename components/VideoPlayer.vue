@@ -218,7 +218,7 @@ function adjustPlaybackRate(increase: boolean) {
 // Toggle subtitle track info display
 function toggleSubtitleInfo() {
   showSubtitleInfo.value = !showSubtitleInfo.value
-  emit('notify', `Subtitle info: ${showSubtitleInfo.value ? 'ON' : 'OFF'}`)
+  emit('notify', `Video info: ${showSubtitleInfo.value ? 'ON' : 'OFF'}`)
 }
 
 // Add ASS tag processing function
@@ -355,7 +355,7 @@ onMounted(() => {
     'V': () => store.toggleSubtitles(),
     'f': () => store.toggleFurigana(),
     'g': () => settings.colorizeWords = !settings.colorizeWords,
-    'i': () => store.toggleSidebar(),
+    'i': () => toggleSubtitleInfo(),
     'x': () => store.toggleSidebar(),
     't': () => cycleAudioTrack(),
     'y': () => store.cycleActiveTrack(),
@@ -669,7 +669,7 @@ function togglePrimarySecondary() {
 
     <!-- Subtitle tracks indicator with video info -->
     <div 
-      v-if="showSubtitleInfo && store.subtitleTracks.length > 1"
+      v-if="showSubtitleInfo"
       class="fixed top-4 left-4 bg-black/50 p-3 rounded text-white text-sm z-40 max-w-md"
     >
       <h3 class="font-semibold mb-1">{{ videoTitle }}</h3>
@@ -677,7 +677,7 @@ function togglePrimarySecondary() {
         {{ formatDuration(videoDuration) }}
         <span v-if="audioTracks.length > 1"> • {{ audioTracks.length }} Audio Tracks</span>
       </div>
-      <div class="border-t border-gray-700 pt-2">
+      <div v-if="store.subtitleTracks.length > 0" class="border-t border-gray-700 pt-2">
         <div>Subtitles: {{ store.activeTrackIndex + 1 }}/{{ store.subtitleTracks.length }}</div>
         <div v-if="store.activeTrack?.metadata" class="text-xs mt-1 text-gray-300">
           {{ store.activeTrack.metadata.language }}: {{ store.activeTrack.metadata.title }}
@@ -767,6 +767,10 @@ function togglePrimarySecondary() {
           <span v-else>▶</span>
         </button>
         
+        <div class="time-display text-white text-sm">
+          {{ formatDuration(currentTime) }} / {{ formatDuration(videoDuration) }}
+        </div>
+        
         <div class="flex-1">
           <div class="progress-bar" ref="progressBar" @click="onProgressClick">
             <div class="progress-fill" :style="{ width: `${progress}%` }"></div>
@@ -778,18 +782,6 @@ function togglePrimarySecondary() {
           <span v-if="isMuted">🔇</span>
           <span v-else>🔊</span>
         </button>
-      </div>
-    </div>
-
-    <!-- Add keyboard shortcuts to help text -->
-    <div class="keyboard-shortcuts text-sm text-gray-400 mt-2">
-      <div class="grid grid-cols-2 gap-2">
-        <div>Left/Right: Seek ±3s</div>
-        <div>A/D: Previous/Next subtitle</div>
-        <div>W or Up: Toggle subtitles</div>
-        <div>S or Down: Seek to subtitle start</div>
-        <div>L: Load subtitle file</div>
-        <div>J: Switch primary/secondary</div>
       </div>
     </div>
   </div>
@@ -1017,15 +1009,13 @@ function togglePrimarySecondary() {
   right: 0;
   padding: 1rem;
   background: linear-gradient(transparent, rgba(0,0,0,0.7));
-  opacity: 0;
-  transition: opacity 0.3s ease;
-  pointer-events: none;
-}
-
-/* Show controls when container is hovered */
-.video-container:hover .custom-controls {
   opacity: 1;
   pointer-events: auto;
+}
+
+/* Remove hover effect since controls are always visible */
+.video-container:hover .custom-controls {
+  opacity: 1;
 }
 
 /* Control buttons */
@@ -1068,10 +1058,10 @@ function togglePrimarySecondary() {
   right: 0;
 }
 
-.keyboard-shortcuts {
-  padding: 0.5rem 1rem;
-  background: rgba(0, 0, 0, 0.5);
-  border-radius: 0.5rem;
-  margin-top: 1rem;
+/* Add time display styles */
+.time-display {
+  min-width: 120px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 </style> 
