@@ -19,17 +19,6 @@ const emit = defineEmits<{
 
 const store = useCaptionsStore()
 
-// Watch for active caption changes and scroll into view
-watch(() => props.activeIds, async (newIds) => {
-  if (newIds.length > 0) {
-    await nextTick()
-    const activeElement = document.querySelector(`.caption-item[data-id="${newIds[0]}"]`)
-    if (activeElement instanceof HTMLElement) {
-      activeElement.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    }
-  }
-}, { immediate: true })
-
 function calcCaptionOffset(caption: Caption): number {
   return store.currentTime - caption.endTime
 }

@@ -983,7 +983,14 @@ function togglePrimarySecondary() {
   margin: 0;
   padding: 0;
 }
-
+.video-container > div > div > div:nth-child(1) > div > span {
+  font-weight: 700;
+  text-shadow: 0 0 3px rgba(0, 0, 0, 0.8);
+}
+.video-container > div > div > div:nth-child(2) > div > span {
+  font-weight: 700;
+  text-shadow: 0 0 7px rgba(0, 0, 0, 0.8);
+}
 .furigana-container rt {
   font-size: 0.5em;
   color: rgba(255, 255, 255, 0.9);
