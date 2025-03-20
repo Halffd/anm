@@ -910,10 +910,6 @@ function togglePrimarySecondary() {
   text-align: center;
   color: white;
   line-height: 1.2;
-  text-shadow: 
-    0 0 5px rgba(0,0,0,0.9),
-    0 0 10px rgba(0,0,0,0.7),
-    0 0 15px rgba(0,0,0,0.5);
   word-wrap: break-word;
   word-break: normal;
   pointer-events: none;
@@ -927,15 +923,19 @@ function togglePrimarySecondary() {
 .primary-track {
   font-size: v-bind('`${settings.primarySubtitleFontSize}em`');
   font-family: v-bind('settings.subtitleFontFamily');
-  font-weight: v-bind('settings.subtitleFontWeight * 1.5');
+  font-weight: v-bind('settings.subtitleFontWeight');
   margin-bottom: 0.5em;
+  --subtitle-shadow: v-bind('settings.primarySubtitleShadow');
+  text-shadow: var(--subtitle-shadow);
 }
 
 .secondary-track {
   font-size: v-bind('`${settings.secondarySubtitleFontSize}em`');
   font-family: v-bind('settings.secondarySubtitleFontFamily');
-  font-weight: v-bind('settings.secondarySubtitleFontWeight * 1.5');
+  font-weight: v-bind('settings.secondarySubtitleFontWeight');
   opacity: 0.9;
+  --subtitle-shadow: v-bind('settings.secondarySubtitleShadow');
+  text-shadow: var(--subtitle-shadow);
 }
 
 /* Lane positioning */
@@ -984,12 +984,10 @@ function togglePrimarySecondary() {
   padding: 0;
 }
 .video-container > div > div > div:nth-child(1) > div > span {
-  font-weight: 700;
-  text-shadow: 0 0 3px rgba(0, 0, 0, 0.8);
+  /* styles will be inherited from .primary-track */
 }
 .video-container > div > div > div:nth-child(2) > div > span {
-  font-weight: 700;
-  text-shadow: 0 0 7px rgba(0, 0, 0, 0.8);
+  /* styles will be inherited from .secondary-track */
 }
 .furigana-container rt {
   font-size: 0.5em;

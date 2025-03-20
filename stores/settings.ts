@@ -15,6 +15,8 @@ interface Settings {
   secondarySubtitleFontFamily: string
   subtitleFontWeight: number
   secondarySubtitleFontWeight: number
+  primarySubtitleShadow: string
+  secondarySubtitleShadow: string
   regexReplacements: RegexReplacement[]
   regexReplacementsEnabled: boolean
   tokenizationMethod: 'kuromoji' | 'sudachi'
@@ -33,8 +35,10 @@ export const useSettingsStore = defineStore('settings', {
     secondarySubtitleFontSize: 1.2,
     subtitleFontFamily: 'Arial, sans-serif',
     secondarySubtitleFontFamily: 'Arial, sans-serif',
-    subtitleFontWeight: 600,
-    secondarySubtitleFontWeight: 500,
+    subtitleFontWeight: 500,
+    secondarySubtitleFontWeight: 700,
+    primarySubtitleShadow: '5px 5px 5px rgba(0,0,0,0.8), -5px -5px 5px rgba(0,0,0,0.8), 5px -5px 5px rgba(0,0,0,0.8), -5px 5px 5px rgba(0,0,0,0.8)',
+    secondarySubtitleShadow: '7px 7px 7px rgba(0,0,0,0.8), -7px -7px 7px rgba(0,0,0,0.8), 7px -7px 7px rgba(0,0,0,0.8), -7px 7px 7px rgba(0,0,0,0.8)',
     regexReplacements: [
       { regex: '\\(\\(.*?\\)\\)', replaceText: '' },
       { regex: '\\(.*?\\)', replaceText: '' },
