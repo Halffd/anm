@@ -39,6 +39,9 @@ const store = useCaptionsStore()
 const settings = useSettingsStore()
 const videoControls = useVideoControls()
 
+// Add SPACE_DELAY at top level
+const SPACE_DELAY = 300 // Delay between space presses in ms
+
 interface AudioTrack {
   enabled: boolean
   language?: string
@@ -336,8 +339,6 @@ onMounted(() => {
       settings.saveVideoPosition(props.videoUrl, videoRef.value.currentTime)
     }
   }, 5000) // Save every 5 seconds
-
-  const SPACE_DELAY = 300 // Increase delay between space presses to 300ms
 
   // Update keyboard shortcuts
   useKeyboardShortcuts({
