@@ -3,6 +3,7 @@
     <NuxtPage />
     <ClientOnly>
       <NotificationManager :message="videoControls.notification" />
+      <AnkiConnector v-if="ankiEnabled" />
     </ClientOnly>
   </div>
 </template>
@@ -10,8 +11,10 @@
 <script setup lang="ts">
 import { useVideoControls } from '~/composables/useVideoControls'
 import NotificationManager from '~/components/NotificationManager.vue'
+import { ref } from 'vue'
 
 const videoControls = useVideoControls()
+const ankiEnabled = ref(true) // Enable Anki integration by default
 </script>
 
 <style>
@@ -63,5 +66,27 @@ html, body {
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
+}
+
+/* Add styles for word status highlighting */
+.word-new {
+  text-decoration: underline;
+  text-decoration-color: #60a5fa; /* blue-400 */
+  text-decoration-thickness: 2px;
+  cursor: pointer;
+}
+
+.word-known {
+  text-decoration: underline;
+  text-decoration-color: #4ade80; /* green-400 */
+  text-decoration-thickness: 2px;
+  cursor: pointer;
+}
+
+.word-mature {
+  text-decoration: underline;
+  text-decoration-color: #c084fc; /* purple-400 */
+  text-decoration-thickness: 2px;
+  cursor: pointer;
 }
 </style> 

@@ -323,6 +323,7 @@ export const useCaptionsStore = defineStore('captions', () => {
 
       // Add as a new track with metadata
       subtitleTracks.value.push({
+        id: crypto.randomUUID(),
         captions: captions,
         metadata: trackInfo
       })

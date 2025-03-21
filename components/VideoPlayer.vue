@@ -5,6 +5,7 @@ import { useCaptionsStore } from '~/stores/captions'
 import { useSettingsStore } from '~/stores/settings'
 import { useKeyboardShortcuts } from '~/composables/useKeyboardShortcuts'
 import { useVideoControls } from '~/composables/useVideoControls'
+import { useAnkiExtension } from '~/composables/useAnkiExtension'
 
 interface HTMLVideoElementWithAudioTracks extends HTMLVideoElement {
   audioTracks?: {
@@ -18,7 +19,7 @@ interface HTMLVideoElementWithAudioTracks extends HTMLVideoElement {
 }
 
 const props = defineProps<{
-  videoUrl: string
+  videoUrl?: string | null
   captions: Caption[]
   currentTime: number
   onAudioTrackChange?: (track: number) => void
@@ -32,12 +33,14 @@ const emit = defineEmits<{
   'audio-track-change': [track: number]
   'playing': []
   'pause': []
+  'ended': []
 }>()
 
 const videoRef = ref<HTMLVideoElement>()
 const store = useCaptionsStore()
 const settings = useSettingsStore()
 const videoControls = useVideoControls()
+const ankiExtension = useAnkiExtension()
 
 // Add SPACE_DELAY at top level
 const SPACE_DELAY = 300 // Delay between space presses in ms
@@ -88,6 +91,16 @@ const captionsUrl = computed(() => {
 const streamingUrl = computed(() => {
   if (!props.videoUrl) return ''
   return `/api/videos/stream/${encodeURIComponent(props.videoUrl)}`
+})
+
+// Add a computed property for the video source
+const videoSource = computed(() => {
+  if (!props.videoUrl) return '';
+  // Use the streaming URL for server-side videos, or direct URL for blob URLs
+  if (props.videoUrl.startsWith('blob:') || props.videoUrl.startsWith('http')) {
+    return props.videoUrl;
+  }
+  return streamingUrl.value;
 })
 
 // Helper function to generate WebVTT content
@@ -160,11 +173,19 @@ function onError(e: Event) {
   emit('error', new Error(video.error?.message || 'Video error'))
 }
 
-function onLoad(e: Event) {
+function onMetadataLoaded(e: Event) {
   const video = e.target as HTMLVideoElementWithAudioTracks
+  
+  // Set video duration and title
+  if (video) {
+    videoDuration.value = video.duration
+    // Extract title from path
+    videoTitle.value = decodeURIComponent(props.videoUrl?.split('/').pop() || '')
+  }
+  
+  // Process audio tracks
   if (!video.audioTracks || video.audioTracks.length === 0) {
     audioTracks.value = []
-    selectedAudioTrack.value = -1
     return
   }
 
@@ -307,17 +328,127 @@ function processText(text: string): { text: string, position?: string } {
   return { text: processed, position }
 }
 
-// Process tokens for colored display
+// Add word status tracking
+const WORD_STATUS = {
+  NEW: 'new',
+  KNOWN: 'known',
+  MATURE: 'mature'
+}
+
+// Add word status colors
+const WORD_STATUS_COLORS = {
+  [WORD_STATUS.NEW]: 'text-blue-400',
+  [WORD_STATUS.KNOWN]: 'text-green-400',
+  [WORD_STATUS.MATURE]: 'text-purple-400'
+}
+
+// Add word status tracking
+const wordStatuses = ref<Record<string, string>>({})
+
+// Add function to determine word status
+function getWordStatus(token: any): string {
+  if (!token) return WORD_STATUS.NEW
+  
+  // Check if token has word_type property (from Anki)
+  if (token.token?.word_type) {
+    switch (token.token.word_type) {
+      case 'NEW': return WORD_STATUS.NEW
+      case 'KNOWN': return WORD_STATUS.KNOWN
+      case 'MATURE': return WORD_STATUS.MATURE
+      default: return WORD_STATUS.NEW
+    }
+  }
+  
+  // Fallback to dictionary lookup in wordStatuses
+  return wordStatuses.value[token.surface_form] || WORD_STATUS.NEW
+}
+
+// Add function to determine if text is non-English
+function isNonEnglishText(text: string): boolean {
+  // Check for non-Latin characters (covers Japanese, Chinese, Korean, etc.)
+  const nonLatinRegex = /[^\u0000-\u007F\u0080-\u00FF\u0100-\u017F\u0180-\u024F]/;
+  return nonLatinRegex.test(text);
+}
+
+// Update getWordStatusClass function
+function getWordStatusClass(token: any): string {
+  // Only apply word status highlighting for Japanese text
+  if (!token || !token.surface_form) {
+    return '';
+  }
+  
+  // Use the existing Japanese detection logic
+  const japaneseMatches = token.surface_form.match(/[\u3000-\u303f\u3040-\u309f\u30a0-\u30ff\uff00-\uff9f\u4e00-\u9faf\u3400-\u4dbf]/g)
+  const japaneseCount = japaneseMatches ? japaneseMatches.length : 0
+  const totalChars = token.surface_form.replace(/\s/g, '').length
+  const isJapanese = totalChars > 0 && (japaneseCount / totalChars) >= 0.4
+  
+  if (!isJapanese) {
+    return '';
+  }
+  
+  const status = getWordStatus(token);
+  return `word-${status}`;
+}
+
+// Add function to handle word click for Anki integration
+function handleWordClick(token: any) {
+  if (!ankiExtension.isExtensionAvailable.value) return
+  
+  try {
+    ankiExtension.sendToExtension({
+      action: 'token',
+      token: token.surface_form
+    })
+    
+    // Update local status (optimistic update)
+    wordStatuses.value[token.surface_form] = WORD_STATUS.KNOWN
+    
+    // Show notification
+    emit('notify', `Added "${token.surface_form}" to Anki`)
+  } catch (error) {
+    console.error('Failed to send word to Anki:', error)
+    emit('notify', `Failed to add word to Anki: ${error instanceof Error ? error.message : 'Unknown error'}`)
+  }
+}
+
+// Add function to record current subtitle in Anki
+function recordCurrentSubtitle() {
+  if (!ankiExtension.isExtensionAvailable.value) return
+  
+  const activeCaptions = store.activeCaptions.filter(c => 
+    c.startTime <= props.currentTime && props.currentTime <= c.endTime
+  )
+  
+  if (activeCaptions.length > 0) {
+    const caption = activeCaptions[0]
+    try {
+      ankiExtension.recordFlashcard(caption, props.currentTime, selectedAudioTrack.value)
+      emit('notify', 'Recorded subtitle in Anki')
+    } catch (error) {
+      console.error('Failed to record subtitle in Anki:', error)
+      emit('notify', `Failed to record in Anki: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    }
+  } else {
+    emit('notify', 'No active subtitle to record')
+  }
+}
+
+// Update processTokens function to include word status class
 function processTokens(tokens: any[]): any[] {
   if (!tokens || !Array.isArray(tokens)) return []
   
   return tokens.map(token => {
     // Ensure token has all required properties
-    return {
+    const processedToken = {
       surface_form: token.surface_form || token[0] || '',
       reading: token.reading || token[1] || '',
-      pos: token.pos || ''
+      pos: token.pos || '',
+      status: getWordStatus(token),
+      statusClass: getWordStatusClass(token)
     }
+    
+    return processedToken
   })
 }
 
@@ -342,26 +473,34 @@ onMounted(() => {
 
   // Update keyboard shortcuts
   useKeyboardShortcuts({
-    ' ': (e) => {
-      e.preventDefault() // Prevent page scroll
-      togglePlay()
+    ' ': (event) => {
+      // Prevent default space behavior (scrolling)
+      event.preventDefault();
+      togglePlayPause();
+      
+      // Add debounce to prevent multiple toggles
+      const now = Date.now();
+      if (now - lastSpacePress < SPACE_DELAY) {
+        return;
+      }
+      lastSpacePress = now;
     },
     'ArrowLeft': () => skipTime(-3),
     'ArrowRight': () => skipTime(3),
+    'ArrowUp': () => adjustVolume(0.1),
+    'ArrowDown': () => adjustVolume(-0.1),
+    'm': () => toggleVideoMute(),
+    'f': () => toggleFullscreen(),
+    'n': () => toggleAnkiMode(),
     'a': () => store.previousCaption(),
     'd': () => store.nextCaption(),
     's': () => store.seekToSubtitleStart(),
-    'ArrowDown': () => skipTime(-3), // Change to match left/right behavior
-    'ArrowUp': () => skipTime(3), // Change to match left/right behavior
-    'w': () => skipTime(3), // Match ArrowUp
     'l': () => openSubtitleFileDialog(),
     'j': () => togglePrimarySecondary(),
     'p': () => store.isAutoPauseMode = false,
     'c': () => store.toggleSecondarySubtitles(),
     'v': () => store.toggleSubtitles(),
     'V': () => store.toggleSubtitles(),
-    'f': () => store.toggleFurigana(),
-    'g': () => settings.colorizeWords = !settings.colorizeWords,
     'i': () => toggleSubtitleInfo(),
     'x': () => store.toggleSidebar(),
     't': () => cycleAudioTrack(),
@@ -370,8 +509,6 @@ onMounted(() => {
     'e': () => exportCurrentCaption(),
     'PageUp': () => skipTime(87),
     'PageDown': () => skipTime(-87),
-    'm': () => increasePlaybackRate(),
-    'n': () => decreasePlaybackRate(),
     '=': () => settings.adjustFontSize(false, true),
     '-': () => settings.adjustFontSize(false, false),
     '+': () => settings.adjustFontSize(false, true),
@@ -380,9 +517,28 @@ onMounted(() => {
     '[': () => settings.adjustFontSize(true, false),
     '}': () => settings.adjustFontSize(true, true),
     '{': () => settings.adjustFontSize(true, false),
+    'r': () => recordCurrentSubtitle(),
   })
 
   window.addEventListener('keydown', (e: KeyboardEvent) => {
+    // Number keys for percentage seeking
+    if (e.key >= '0' && e.key <= '9' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      e.preventDefault()
+      const percent = e.key === '0' ? 0 : parseInt(e.key) * 10
+      seekToPercentage(percent)
+    }
+    
+    // Home/End keys for start/end seeking
+    if (e.key === 'Home') {
+      e.preventDefault()
+      seekToStart()
+    }
+    
+    if (e.key === 'End') {
+      e.preventDefault()
+      seekToEnd()
+    }
+    
     // Subtitle delay adjustments
     if (e.key === 'z' || e.key === 'x') {
       e.preventDefault()
@@ -408,6 +564,9 @@ onMounted(() => {
       }
     }
   })
+
+  // Add fullscreen change event listener
+  document.addEventListener('fullscreenchange', onFullscreenChange)
 })
 
 onUnmounted(() => {
@@ -425,6 +584,9 @@ onUnmounted(() => {
   if (captionsUrl.value) {
     URL.revokeObjectURL(captionsUrl.value)
   }
+
+  // Remove fullscreen change event listener
+  document.removeEventListener('fullscreenchange', onFullscreenChange)
 })
 
 // Watch for video URL changes
@@ -445,22 +607,29 @@ defineExpose({
 })
 
 // Video control functions
-let lastSpaceTime = 0
+let lastSpacePress = 0
 
-function togglePlay() {
-  const video = videoRef.value
-  if (!video) return
-  
-  const now = Date.now()
-  if (now - lastSpaceTime < SPACE_DELAY) {
-    return // Ignore if pressed too recently
+function togglePlayPause(event?: MouseEvent) {
+  // Don't toggle if clicking on controls or subtitle elements
+  if (event && (
+    event.target instanceof HTMLButtonElement || 
+    event.target instanceof HTMLInputElement ||
+    (event.target as HTMLElement).closest('.custom-controls') ||
+    (event.target as HTMLElement).closest('.subtitles-container')
+  )) {
+    return;
   }
-  lastSpaceTime = now
+  
+  const video = videoRef.value;
+  if (!video) return;
   
   if (video.paused) {
-    video.play()
+    video.play().catch(err => {
+      console.error('Failed to play video:', err);
+      emit('error', new Error('Failed to play video'));
+    });
   } else {
-    video.pause()
+    video.pause();
   }
 }
 
@@ -521,20 +690,12 @@ const onSeeked = () => {
   // Handle seeked state
 }
 
-// Add helper function to detect Japanese text
-function isJapaneseText(text: string): boolean {
-  const japaneseMatches = text.match(/[\u3000-\u303f\u3040-\u309f\u30a0-\u30ff\uff00-\uff9f\u4e00-\u9faf\u3400-\u4dbf]/g)
-  const japaneseCount = japaneseMatches ? japaneseMatches.length : 0
-  const totalChars = text.replace(/\s/g, '').length
-  return totalChars > 0 && (japaneseCount / totalChars) >= 0.4
-}
-
 const isPlaying = ref(false)
 const isMuted = ref(false)
 const progress = ref(0)
 const progressBar = ref<HTMLElement | null>(null)
 
-function toggleMute() {
+function toggleVideoMute() {
   if (!videoRef.value) return
   videoRef.value.muted = !videoRef.value.muted
   isMuted.value = videoRef.value.muted
@@ -545,14 +706,6 @@ function onProgressClick(event: MouseEvent) {
   const rect = progressBar.value.getBoundingClientRect()
   const pos = (event.clientX - rect.left) / rect.width
   videoRef.value.currentTime = pos * videoRef.value.duration
-}
-
-// Add metadata loaded handler
-function onMetadataLoaded() {
-  if (!videoRef.value) return
-  videoDuration.value = videoRef.value.duration
-  // Extract title from path
-  videoTitle.value = decodeURIComponent(props.videoUrl.split('/').pop() || '')
 }
 
 // Format duration helper
@@ -635,59 +788,230 @@ function togglePrimarySecondary() {
   store.cycleActiveTrack()
   emit('notify', `Active subtitle: ${store.activeTrack?.metadata?.title || 'Unknown'}`)
 }
+
+// Add function to clean HTML but preserve formatting
+function cleanHtml(html: string): string {
+  if (!html) return '';
+  
+  // Remove ASS tags
+  let cleaned = html.replace(/\\N/g, '<br>');
+  
+  // Keep font tags but remove other potentially unsafe tags
+  cleaned = cleaned
+    .replace(/<(?!\/?(font|b|i|u)[> ])[^>]+>/gi, '')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
+    
+  return cleaned;
+}
+
+// Add function to toggle Anki mode
+function toggleAnkiMode() {
+  settings.ankiEnabled = !settings.ankiEnabled;
+  emit('notify', settings.ankiEnabled ? 'Anki mode enabled' : 'Anki mode disabled');
+}
+
+// Add volume control functions
+function adjustVolume(amount: number) {
+  const video = videoRef.value
+  if (!video) return
+  
+  // Clamp volume between 0 and 1
+  video.volume = Math.max(0, Math.min(1, video.volume + amount))
+  emit('notify', `Volume: ${Math.round(video.volume * 100)}%`)
+}
+
+function toggleFullscreen() {
+  if (!document.fullscreenElement) {
+    document.documentElement.requestFullscreen().catch(err => {
+      emit('error', new Error(`Error attempting to enable fullscreen: ${err.message}`))
+    })
+  } else {
+    document.exitFullscreen()
+  }
+}
+
+// Add new state variables
+const volume = ref(1)
+const previewTime = ref<number | null>(null)
+const previewPosition = ref(0)
+const isFullscreen = ref(false)
+
+// Add new functions for seeking
+function seekToPercentage(percent: number) {
+  const video = videoRef.value
+  if (!video) return
+  
+  const targetTime = (percent / 100) * video.duration
+  video.currentTime = targetTime
+  emit('notify', `Seeking to ${percent}%`)
+}
+
+function seekToStart() {
+  const video = videoRef.value
+  if (!video) return
+  
+  video.currentTime = 0
+  emit('notify', 'Seeking to start')
+}
+
+function seekToEnd() {
+  const video = videoRef.value
+  if (!video) return
+  
+  video.currentTime = video.duration
+  emit('notify', 'Seeking to end')
+}
+
+// Add function for volume slider
+function onVolumeChange(event: Event) {
+  const video = videoRef.value
+  if (!video) return
+  
+  volume.value = parseFloat((event.target as HTMLInputElement).value)
+  video.volume = volume.value
+  video.muted = volume.value === 0
+  isMuted.value = video.muted
+}
+
+// Add function for progress bar hover
+function onProgressHover(event: MouseEvent) {
+  const progressBar = event.currentTarget as HTMLElement
+  const rect = progressBar.getBoundingClientRect()
+  const position = (event.clientX - rect.left) / rect.width
+  
+  previewPosition.value = position * 100
+  previewTime.value = position * videoDuration.value || null
+}
+
+function onFullscreenChange() {
+  isFullscreen.value = !!document.fullscreenElement
+}
 </script>
 
 <template>
   <div 
     class="video-container" 
-    :class="{ 
-      'center': settings.videoAlignment === 'center',
-      'left': settings.videoAlignment === 'left',
-      'right': settings.videoAlignment === 'right',
-      'has-subtitles': store.allActiveCaptions.length > 0,
-      'controls-hidden': settings.hidePlayerControls && !isHovering
-    }"
+    :class="[props.videoAlignment || 'center', { 'has-subtitles': hasSubtitles }]"
+    @click="togglePlayPause"
   >
     <video
       ref="videoRef"
-      :src="streamingUrl"
+      :src="videoSource"
       :controls="false"
       @timeupdate="onTimeUpdate"
+      @error="onError"
       @loadedmetadata="onMetadataLoaded"
       @play="onPlay"
       @pause="onPause"
-      @seeking="onSeeking"
-      @seeked="onSeeked"
-      @mouseover="isHovering = true"
+      @ended="emit('ended')"
+      @mousemove="isHovering = true"
       @mouseleave="isHovering = false"
       class="video-element"
+      crossorigin="anonymous"
+      preload="auto"
+      playsinline
     >
       Your browser does not support the video tag.
     </video>
 
-    <!-- Custom controls - always show -->
-    <div class="custom-controls">
-      <div class="flex items-center gap-2">
-        <button class="control-button" @click="togglePlay">
-          <span v-if="!videoRef?.paused">⏸</span>
-          <span v-else>▶</span>
-        </button>
-        
-        <div class="time-display text-white text-sm">
-          {{ formatDuration(currentTime) }} / {{ formatDuration(videoDuration) }}
+    <!-- Subtitles container -->
+    <div v-if="store.showSubtitles" class="subtitles-container">
+      <!-- Primary subtitles -->
+      <div v-for="caption in store.activeCaptions" :key="caption.id" class="subtitle-wrapper">
+        <div class="subtitle-line">
+          <!-- Use v-html for formatted subtitles -->
+          <span v-html="cleanHtml(caption.text)"></span>
         </div>
-        
-        <div class="flex-1">
-          <div class="progress-bar" ref="progressBar" @click="onProgressClick">
-            <div class="progress-fill" :style="{ width: `${(currentTime / videoDuration) * 100}%` }"></div>
-            <div class="progress-hover"></div>
+      </div>
+      
+      <!-- Secondary subtitles if enabled -->
+      <div v-if="store.showSecondarySubtitles && hasSecondarySubtitles" class="secondary-subtitles">
+        <div v-for="(track, trackIndex) in store.subtitleTracks" :key="track.id">
+          <template v-if="trackIndex !== store.activeTrackIndex">
+            <div v-for="caption in track.captions" :key="caption.id" class="subtitle-wrapper">
+              <div 
+                v-if="caption.startTime <= props.currentTime && props.currentTime <= caption.endTime"
+                class="subtitle-line secondary"
+              >
+                <!-- Use v-html for formatted subtitles -->
+                <span v-html="cleanHtml(caption.text)"></span>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+    </div>
+
+    <!-- Improved custom controls -->
+    <div class="custom-controls" :class="{ 'visible': isHovering || !videoRef?.paused }">
+      <!-- Progress bar with preview -->
+      <div class="progress-container">
+        <div class="progress-bar" ref="progressBar" @click="onProgressClick" @mousemove="onProgressHover">
+          <div class="progress-fill" :style="{ width: `${(currentTime / videoDuration) * 100}%` }"></div>
+          <div class="progress-handle" :style="{ left: `${(currentTime / videoDuration) * 100}%` }"></div>
+          <div v-if="previewTime" class="time-preview" :style="{ left: `${previewPosition}%` }">
+            {{ formatDuration(previewTime) }}
           </div>
         </div>
-
-        <button class="control-button" @click="toggleMute">
-          <span v-if="isMuted">🔇</span>
-          <span v-else>🔊</span>
-        </button>
+      </div>
+      
+      <!-- Control buttons -->
+      <div class="controls-row">
+        <div class="left-controls">
+          <button class="control-button play-pause" @click.stop="togglePlayPause">
+            <svg v-if="videoRef?.paused" viewBox="0 0 24 24" class="play-icon">
+              <path d="M8 5v14l11-7z" />
+            </svg>
+            <svg v-else viewBox="0 0 24 24" class="pause-icon">
+              <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
+            </svg>
+          </button>
+          
+          <div class="volume-control">
+            <button class="control-button" @click.stop="toggleVideoMute">
+              <svg viewBox="0 0 24 24" class="volume-icon">
+                <path v-if="isMuted" d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z" />
+                <path v-else-if="volume < 0.5" d="M18.5 12c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM5 9v6h4l5 5V4L9 9H5z" />
+                <path v-else d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
+              </svg>
+            </button>
+            <input 
+              type="range" 
+              min="0" 
+              max="1" 
+              step="0.01" 
+              :value="volume" 
+              @input="onVolumeChange" 
+              @click.stop 
+              class="volume-slider"
+            />
+          </div>
+          
+          <div class="time-display">
+            {{ formatDuration(currentTime) }} / {{ formatDuration(videoDuration) }}
+          </div>
+        </div>
+        
+        <div class="right-controls">
+          <!-- Add Anki button if extension is available -->
+          <button 
+            v-if="ankiExtension.isExtensionAvailable" 
+            class="control-button" 
+            @click.stop="recordCurrentSubtitle"
+            title="Record current subtitle in Anki (R)"
+          >
+            <span class="anki-icon">A</span>
+          </button>
+          
+          <button class="control-button" @click.stop="toggleFullscreen" title="Fullscreen (f)">
+            <svg viewBox="0 0 24 24" class="fullscreen-icon">
+              <path v-if="isFullscreen" d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z" />
+              <path v-else d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z" />
+            </svg>
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -929,67 +1253,159 @@ function togglePrimarySecondary() {
   max-height: 50vh;
 }
 
-/* Custom controls container */
+/* Improved control styles */
 .custom-controls {
   position: absolute;
   bottom: 0;
   left: 0;
   right: 0;
-  padding: 1rem;
-  background: linear-gradient(transparent, rgba(0,0,0,0.7));
-  opacity: 1;
-  pointer-events: auto;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.7));
+  padding: 10px;
+  transition: opacity 0.3s ease;
+  opacity: 0;
+  z-index: 100;
 }
 
-/* Remove hover effect since controls are always visible */
-.video-container:hover .custom-controls {
-  opacity: 1;
-}
-
-/* Control buttons */
-.control-button {
-  background: transparent;
-  border: none;
-  color: white;
-  padding: 0.5rem;
-  cursor: pointer;
-  opacity: 0.8;
-  transition: opacity 0.2s;
-}
-
-.control-button:hover {
+.custom-controls.visible {
   opacity: 1;
 }
 
-/* Progress bar */
-.progress-bar {
+.progress-container {
   width: 100%;
-  height: 4px;
-  background: rgba(255,255,255,0.2);
-  margin-top: 0.5rem;
-  cursor: pointer;
+  padding: 10px 0;
+}
+
+.progress-bar {
   position: relative;
+  height: 5px;
+  background-color: rgba(255, 255, 255, 0.3);
+  border-radius: 2.5px;
+  cursor: pointer;
+  transition: height 0.2s ease;
+}
+
+.progress-bar:hover {
+  height: 8px;
 }
 
 .progress-fill {
   height: 100%;
-  background: #3b82f6;
-  width: 0%;
+  background-color: #3b82f6;
+  border-radius: 2.5px;
   transition: width 0.1s linear;
 }
 
-.progress-hover {
+.progress-handle {
   position: absolute;
-  top: -8px;
-  bottom: -8px;
-  left: 0;
-  right: 0;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  background-color: #3b82f6;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  opacity: 0;
+  transition: opacity 0.2s ease;
 }
 
-/* Add time display styles */
+.progress-bar:hover .progress-handle {
+  opacity: 1;
+}
+
+.time-preview {
+  position: absolute;
+  bottom: 15px;
+  transform: translateX(-50%);
+  background-color: rgba(0, 0, 0, 0.8);
+  color: white;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.controls-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 5px;
+}
+
+.left-controls, .right-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.control-button {
+  background: transparent;
+  border: none;
+  color: white;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  border-radius: 50%;
+  transition: background-color 0.2s ease;
+}
+
+.control-button:hover {
+  background-color: rgba(255, 255, 255, 0.2);
+}
+
+.control-button svg {
+  width: 24px;
+  height: 24px;
+  fill: white;
+}
+
+.play-pause {
+  width: 40px;
+  height: 40px;
+}
+
+.volume-control {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.volume-slider {
+  width: 60px;
+  height: 5px;
+  -webkit-appearance: none;
+  background: rgba(255, 255, 255, 0.3);
+  border-radius: 2.5px;
+  outline: none;
+}
+
+.volume-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: white;
+  cursor: pointer;
+}
+
+.volume-slider::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: white;
+  cursor: pointer;
+  border: none;
+}
+
 .time-display {
-  min-width: 120px;
-  text-align: center;
+  color: white;
+  font-size: 14px;
+  min-width: 100px;
   font-variant-numeric: tabular-nums;
+}
+
+.anki-icon {
+  font-weight: bold;
+  font-size: 16px;
 }
 </style> 

@@ -312,13 +312,13 @@ const handleFileSelect = async (event: Event) => {
   }
 }
 
-function onVideoSelect(video: VideoInfo) {
+function onVideoSelect(video: any) {
   selectedVideo.value = video
   playlist.value = [video]
   currentPlaylistIndex.value = 0
 }
 
-function onPlaylistSelect(videos: VideoInfo[]) {
+function onPlaylistSelect(videos: any[]) {
   playlist.value = videos
   currentPlaylistIndex.value = 0
   selectedVideo.value = videos[0]
@@ -343,7 +343,7 @@ function onVideoEnd() {
       <VideoPlayer
         v-if="selectedVideo"
         ref="videoPlayerRef"
-        :video-url="selectedVideo.path"
+        :video-url="selectedVideo.path || selectedVideo.url"
         :captions="captionsStore.captions"
         :current-time="captionsStore.currentTime"
         @timeupdate="captionsStore.setCurrentTime"

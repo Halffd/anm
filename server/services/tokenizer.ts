@@ -24,6 +24,19 @@ const isBrowser = typeof window !== 'undefined'
 // Japanese text detection regex
 const JAPANESE_REGEX = /[\u3000-\u303f\u3040-\u309f\u30a0-\u30ff\uff00-\uff9f\u4e00-\u9faf\u3400-\u4dbf]/
 
+// Add regex for non-English text detection (more comprehensive)
+const NON_ENGLISH_REGEX = /[^\u0000-\u007F\u0080-\u00FF\u0100-\u017F\u0180-\u024F]/
+
+// Add interface for word status
+interface WordStatus {
+  surface_form: string
+  status: 'new' | 'known' | 'mature'
+  timestamp: number
+}
+
+// Add word status cache
+let wordStatusCache: Record<string, WordStatus> = {}
+
 export function getTokenizationMethod() {
   return tokenizationMethod
 }
@@ -144,6 +157,25 @@ function simpleTokenize(text: string): Token[] {
     .map(createSimpleToken);
 }
 
+// Add function to update word status
+export function updateWordStatus(surface: string, status: 'new' | 'known' | 'mature'): void {
+  wordStatusCache[surface] = {
+    surface_form: surface,
+    status,
+    timestamp: Date.now()
+  }
+}
+
+// Add function to get word status
+export function getWordStatus(surface: string): 'new' | 'known' | 'mature' {
+  return wordStatusCache[surface]?.status || 'new'
+}
+
+// Function to check if text is non-English
+export function isNonEnglishText(text: string): boolean {
+  return NON_ENGLISH_REGEX.test(text);
+}
+
 export async function tokenize(text: string, retryCount = 0): Promise<Token[]> {
   // If text is empty or not a string, return empty array
   if (!text || typeof text !== 'string' || text.trim() === '') {
@@ -170,26 +202,39 @@ export async function tokenize(text: string, retryCount = 0): Promise<Token[]> {
     }
 
     // Use the selected tokenization method
+    let tokens: Token[] = []
+    
     if (tokenizationMethod === 'kuromoji') {
       console.log('[Tokenizer] Using Kuromoji tokenizer')
       try {
-        return await analyzeKuromoji(text)
+        tokens = await analyzeKuromoji(text)
       } catch (kuromojiError) {
         console.error('[Tokenizer] Kuromoji tokenization failed, falling back to simple tokenizer:', kuromojiError)
-        return simpleTokenize(text)
+        tokens = simpleTokenize(text)
       }
     } else if (tokenizationMethod === 'sudachi') {
       console.log('[Tokenizer] Using Sudachi tokenizer')
       try {
-        return await analyzeSudachi(text)
+        tokens = await analyzeSudachi(text)
       } catch (sudachiError) {
         console.error('[Tokenizer] Sudachi tokenization failed, falling back to simple tokenizer:', sudachiError)
-        return simpleTokenize(text)
+        tokens = simpleTokenize(text)
       }
     } else {
       console.warn(`[Tokenizer] Unknown tokenization method: ${tokenizationMethod}, falling back to simple tokenizer`)
-      return simpleTokenize(text)
+      tokens = simpleTokenize(text)
     }
+    
+    // Add word status to tokens, but only for non-English text
+    return tokens.map(token => {
+      if (isNonEnglishText(token.surface_form)) {
+        return {
+          ...token,
+          status: getWordStatus(token.surface_form)
+        }
+      }
+      return token;
+    })
   } catch (error) {
     console.error('[Tokenizer] Tokenization failed:', error)
     lastError = error instanceof Error ? error : new Error(String(error))
