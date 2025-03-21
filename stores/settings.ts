@@ -26,6 +26,7 @@ interface Settings {
   hidePlayerControls: boolean
   videoPositions: Record<string, number>
   ankiEnabled: boolean
+  showFurigana: boolean
 }
 
 export const useSettingsStore = defineStore('settings', {
@@ -52,7 +53,8 @@ export const useSettingsStore = defineStore('settings', {
     hideControlButtons: false,
     hidePlayerControls: true,
     videoPositions: {},
-    ankiEnabled: true
+    ankiEnabled: true,
+    showFurigana: true
   }),
 
   actions: {

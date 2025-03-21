@@ -7,6 +7,17 @@ import { useKeyboardShortcuts } from '~/composables/useKeyboardShortcuts'
 import { useVideoControls } from '~/composables/useVideoControls'
 import { useAnkiExtension } from '~/composables/useAnkiExtension'
 
+// Define Token interface
+interface Token {
+  surface_form: string;
+  surface: string;
+  reading: string;
+  pos: string;
+  basic_form: string;
+  isHighlighted: boolean;
+  status?: 'new' | 'known' | 'mature';
+}
+
 interface HTMLVideoElementWithAudioTracks extends HTMLVideoElement {
   audioTracks?: {
     length: number
@@ -101,6 +112,15 @@ const videoSource = computed(() => {
     return props.videoUrl;
   }
   return streamingUrl.value;
+})
+
+// Add computed property for video alignment style
+const videoAlignmentStyle = computed(() => {
+  switch (props.videoAlignment || settings.videoAlignment) {
+    case 'left': return 'left center';
+    case 'right': return 'right center';
+    default: return 'center center';
+  }
 })
 
 // Helper function to generate WebVTT content
@@ -539,6 +559,31 @@ onMounted(() => {
       seekToEnd()
     }
     
+    // Font size adjustment shortcuts
+    if ((e.key === '=' || e.key === '+') && !e.ctrlKey && !e.altKey) {
+      e.preventDefault()
+      settings.adjustFontSize(false, true)
+      emit('notify', `Primary font size: ${settings.primarySubtitleFontSize.toFixed(1)}`)
+    }
+    
+    if (e.key === '-' || e.key === '_') {
+      e.preventDefault()
+      settings.adjustFontSize(false, false)
+      emit('notify', `Primary font size: ${settings.primarySubtitleFontSize.toFixed(1)}`)
+    }
+    
+    if (e.key === ']' || e.key === '}') {
+      e.preventDefault()
+      settings.adjustFontSize(true, true)
+      emit('notify', `Secondary font size: ${settings.secondarySubtitleFontSize.toFixed(1)}`)
+    }
+    
+    if (e.key === '[' || e.key === '{') {
+      e.preventDefault()
+      settings.adjustFontSize(true, false)
+      emit('notify', `Secondary font size: ${settings.secondarySubtitleFontSize.toFixed(1)}`)
+    }
+    
     // Subtitle delay adjustments
     if (e.key === 'z' || e.key === 'x') {
       e.preventDefault()
@@ -567,6 +612,25 @@ onMounted(() => {
 
   // Add fullscreen change event listener
   document.addEventListener('fullscreenchange', onFullscreenChange)
+
+  // Set up a watcher to process tokens when captions change
+  watch(() => store.activeCaptions, () => {
+    processTokensForDisplay();
+  }, { immediate: true, deep: true });
+  
+  // Also process tokens when furigana data changes
+  watch(() => store.activeCaptions.map(c => c.furigana), () => {
+    processTokensForDisplay();
+  }, { immediate: true, deep: true });
+  
+  // Set up keyboard shortcuts
+  const cleanupKeyboardShortcuts = setupKeyboardShortcuts();
+  
+  // Clean up on unmount
+  onUnmounted(() => {
+    cleanupKeyboardShortcuts();
+    window.removeEventListener('keydown', handleKeyDown);
+  });
 })
 
 onUnmounted(() => {
@@ -789,11 +853,11 @@ function togglePrimarySecondary() {
   emit('notify', `Active subtitle: ${store.activeTrack?.metadata?.title || 'Unknown'}`)
 }
 
-// Add function to clean HTML but preserve formatting
-function cleanHtml(html: string): string {
+// Add function to clean and process HTML in subtitles
+function processSubtitleHtml(html: string): string {
   if (!html) return '';
   
-  // Remove ASS tags
+  // Remove ASS tags but preserve line breaks
   let cleaned = html.replace(/\\N/g, '<br>');
   
   // Keep font tags but remove other potentially unsafe tags
@@ -804,6 +868,11 @@ function cleanHtml(html: string): string {
     .replace(/&amp;/g, '&');
     
   return cleaned;
+}
+
+// Add function to strip HTML for tokenization
+function stripHtml(html: string): string {
+  return html.replace(/<[^>]+>/g, '');
 }
 
 // Add function to toggle Anki mode
@@ -888,12 +957,293 @@ function onProgressHover(event: MouseEvent) {
 function onFullscreenChange() {
   isFullscreen.value = !!document.fullscreenElement
 }
+
+// Add function to check if store exists and has the showFurigana property
+function getShowFurigana() {
+  // Access the property correctly from the settings store
+  return settings?.showFurigana ?? true;
+}
+
+// Add a function to properly handle Japanese text tokenization
+function processJapaneseText(text: string): Token[] {
+  // This is a simple implementation - you might want to use a proper tokenizer
+  // like kuromoji.js or TinySegmenter for better results
+  
+  // Remove any HTML tags that might be in the text
+  const cleanText = text.replace(/<[^>]*>/g, '');
+  
+  // Use the browser's Intl.Segmenter if available for proper word segmentation
+  if (typeof Intl !== 'undefined' && Intl.Segmenter) {
+    try {
+      const segmenter = new Intl.Segmenter('ja', { granularity: 'word' });
+      const segments = segmenter.segment(cleanText);
+      
+      // Convert segments to tokens
+      return Array.from(segments)
+        .filter(segment => segment.segment.trim() !== '') // Filter out empty segments
+        .map(segment => ({
+          surface_form: segment.segment,
+          surface: segment.segment,
+          reading: '', // You would need a dictionary for readings
+          pos: 'UNKNOWN',
+          basic_form: segment.segment,
+          isHighlighted: false,
+          status: 'new' // Default status for new tokens
+        }));
+    } catch (e) {
+      console.error('Error using Intl.Segmenter:', e);
+    }
+  }
+  
+  // Fallback to simple word-based tokenization
+  // This regex tries to match Japanese words by common patterns
+  const words = cleanText.match(/[一-龯ぁ-ゔァ-ヴー々〆〤]+|[a-zA-Z0-9]+|[.,!?;:'"()[\]{}]/g) || [];
+  
+  return words.map((word: string) => ({
+    surface_form: word,
+    surface: word,
+    reading: '', // You would need a dictionary for readings
+    pos: 'UNKNOWN',
+    basic_form: word,
+    isHighlighted: false,
+    status: 'new' // Default status for new tokens
+  }));
+}
+
+// Add a function to directly access the furigana data from the store
+function getFuriganaForCaption(caption: Caption): Record<string, string> {
+  // Check if the caption has furigana data
+  if (caption.furigana && Array.isArray(caption.furigana)) {
+    // Convert the furigana array to a map of surface_form -> reading
+    const furiganaMap: Record<string, string> = {};
+    caption.furigana.forEach(([surface, reading]) => {
+      if (surface && reading) {
+        furiganaMap[surface] = reading;
+      }
+    });
+    return furiganaMap;
+  }
+  return {};
+}
+
+// Function to process tokens for display
+function processTokensForDisplay() {
+  // Get all active captions
+  const activeCaptions = store.activeCaptions || [];
+  
+  // Process each caption
+  activeCaptions.forEach(caption => {
+    if (!caption.tokens || caption.tokens.length === 0 || 
+        (caption.tokens.length > 0 && caption.tokens.every(t => t.surface_form.length === 1))) {
+      // If no tokens or all tokens are single characters, apply our tokenization
+      const processedTokens = processJapaneseText(caption.text);
+      
+      // Get furigana data for this caption
+      const furiganaMap = getFuriganaForCaption(caption);
+      
+      // Apply furigana readings to tokens
+      processedTokens.forEach(token => {
+        if (furiganaMap[token.surface_form]) {
+          token.reading = furiganaMap[token.surface_form];
+        }
+        
+        // Also check if we have furigana for parts of this token
+        Object.entries(furiganaMap).forEach(([surface, reading]) => {
+          if (token.surface_form.includes(surface) && surface.length > 1) {
+            // If this token contains a surface with furigana, apply it
+            token.reading = reading;
+          }
+        });
+      });
+      
+      // Instead of modifying the caption directly, we'll use a Map to store processed tokens
+      processedTokensMap.set(caption.id, processedTokens);
+      
+      // Log for debugging
+      console.log(`[Tokenizer] Processed ${processedTokens.length} tokens for caption: "${caption.text}"`);
+      console.log(`[Tokenizer] Furigana data:`, furiganaMap);
+    }
+  });
+}
+
+// Create a Map to store processed tokens by caption ID
+const processedTokensMap = new Map<string, Token[]>();
+
+// Function to get processed tokens for a caption
+function getProcessedTokens(caption: Caption): Token[] {
+  const processedTokens = processedTokensMap.get(caption.id);
+  if (processedTokens) return processedTokens;
+  
+  // If we don't have processed tokens, convert the existing tokens to our Token format
+  if (caption.tokens && caption.tokens.length > 0) {
+    return caption.tokens.map(t => ({
+      surface_form: t.surface_form,
+      surface: t.surface_form, // Use surface_form as surface
+      reading: t.reading || '',
+      pos: t.pos || 'UNKNOWN',
+      basic_form: t.basic_form || t.surface_form,
+      isHighlighted: false,
+      status: t.status
+    }));
+  }
+  
+  // If no tokens at all, return empty array
+  return [];
+}
+
+// Add a function to handle token clicks
+function handleTokenClick(token: any) {
+  console.log('Token clicked:', token);
+  // Add your token click handling logic here
+}
+
+// Add keyboard shortcuts for subtitle font size adjustment
+function setupKeyboardShortcuts() {
+  const shortcuts: Record<string, () => void> = {
+    // Existing shortcuts...
+    
+    // Add shortcuts for primary subtitle font size
+    '=': () => {
+      increasePrimarySubtitleFontSize();
+    },
+    '+': () => {
+      increasePrimarySubtitleFontSize();
+    },
+    '-': () => {
+      decreasePrimarySubtitleFontSize();
+    },
+    '_': () => {
+      decreasePrimarySubtitleFontSize();
+    },
+    
+    // Add shortcuts for secondary subtitle font size
+    ']': () => {
+      increaseSecondarySubtitleFontSize();
+    },
+    '}': () => {
+      increaseSecondarySubtitleFontSize();
+    },
+    '[': () => {
+      decreaseSecondarySubtitleFontSize();
+    },
+    '{': () => {
+      decreaseSecondarySubtitleFontSize();
+    },
+  };
+  
+  // Register keyboard event listeners
+  const handleKeyDown = (e: KeyboardEvent) => {
+    // Prevent handling if user is typing in an input field
+    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+      return;
+    }
+    
+    const key = e.key;
+    if (key in shortcuts) {
+      e.preventDefault();
+      shortcuts[key]();
+    }
+  };
+  
+  window.addEventListener('keydown', handleKeyDown);
+  
+  // Return cleanup function
+  return () => {
+    window.removeEventListener('keydown', handleKeyDown);
+  };
+}
+
+// Functions to adjust primary subtitle font size
+function increasePrimarySubtitleFontSize() {
+  if (settings.primarySubtitleFontSize < 3.0) {
+    settings.primarySubtitleFontSize += 0.1;
+    if (typeof settings.saveSettings === 'function') {
+      settings.saveSettings();
+    }
+    emit('notify', `Primary subtitle size: ${settings.primarySubtitleFontSize.toFixed(1)}`);
+  }
+}
+
+function decreasePrimarySubtitleFontSize() {
+  if (settings.primarySubtitleFontSize > 0.5) {
+    settings.primarySubtitleFontSize -= 0.1;
+    if (typeof settings.saveSettings === 'function') {
+      settings.saveSettings();
+    }
+    emit('notify', `Primary subtitle size: ${settings.primarySubtitleFontSize.toFixed(1)}`);
+  }
+}
+
+// Functions to adjust secondary subtitle font size
+function increaseSecondarySubtitleFontSize() {
+  if (settings.secondarySubtitleFontSize < 3.0) {
+    settings.secondarySubtitleFontSize += 0.1;
+    if (typeof settings.saveSettings === 'function') {
+      settings.saveSettings();
+    }
+    emit('notify', `Secondary subtitle size: ${settings.secondarySubtitleFontSize.toFixed(1)}`);
+  }
+}
+
+function decreaseSecondarySubtitleFontSize() {
+  if (settings.secondarySubtitleFontSize > 0.5) {
+    settings.secondarySubtitleFontSize -= 0.1;
+    if (typeof settings.saveSettings === 'function') {
+      settings.saveSettings();
+    }
+    emit('notify', `Secondary subtitle size: ${settings.secondarySubtitleFontSize.toFixed(1)}`);
+  }
+}
+
+// Add event listeners for keyboard shortcuts directly
+const handleKeyDown = (e: KeyboardEvent) => {
+  // Prevent handling if user is typing in an input field
+  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+    return;
+  }
+  
+  switch (e.key) {
+    case '=':
+    case '+':
+      e.preventDefault();
+      increasePrimarySubtitleFontSize();
+      break;
+    case '-':
+    case '_':
+      e.preventDefault();
+      decreasePrimarySubtitleFontSize();
+      break;
+    case ']':
+    case '}':
+      e.preventDefault();
+      increaseSecondarySubtitleFontSize();
+      break;
+    case '[':
+    case '{':
+      e.preventDefault();
+      decreaseSecondarySubtitleFontSize();
+      break;
+  }
+};
+
+window.addEventListener('keydown', handleKeyDown);
+
+// Clean up on unmount
+onUnmounted(() => {
+  window.removeEventListener('keydown', handleKeyDown);
+});
+
+// Helper function to check if a string contains Japanese characters
+function isJapaneseCharacter(text: string): boolean {
+  // Check if the text contains Japanese characters
+  return /[\u3000-\u303f\u3040-\u309f\u30a0-\u30ff\uff00-\uff9f\u4e00-\u9faf\u3400-\u4dbf]/.test(text);
+}
 </script>
 
 <template>
   <div 
     class="video-container" 
-    :class="[props.videoAlignment || 'center', { 'has-subtitles': hasSubtitles }]"
+    :class="[props.videoAlignment || 'center', { 'has-subtitles': hasSubtitles, 'fullscreen': isFullscreen }]"
     @click="togglePlayPause"
   >
     <video
@@ -912,17 +1262,50 @@ function onFullscreenChange() {
       crossorigin="anonymous"
       preload="auto"
       playsinline
+      :style="{ objectPosition: videoAlignment }"
     >
       Your browser does not support the video tag.
     </video>
 
     <!-- Subtitles container -->
-    <div v-if="store.showSubtitles" class="subtitles-container">
+    <div v-if="store.showSubtitles" class="subtitles-container" :class="{ 'no-controls': !settings.showVideoControls }" lang="ja" data-yomichan-enable="true">
       <!-- Primary subtitles -->
       <div v-for="caption in store.activeCaptions" :key="caption.id" class="subtitle-wrapper">
         <div class="subtitle-line">
-          <!-- Use v-html for formatted subtitles -->
-          <span v-html="cleanHtml(caption.text)"></span>
+          <!-- If caption has HTML formatting, use v-html -->
+          <span v-if="caption.text.includes('<font')" v-html="processSubtitleHtml(caption.text)"></span>
+          <!-- Otherwise use tokenized display with furigana -->
+          <template v-else>
+            <span v-if="!getShowFurigana()" class="japanese-text">
+              <template v-for="(token, index) in getProcessedTokens(caption)" :key="index">
+                <span 
+                  :class="{ 
+                    'word': true, 
+                    'known': token.status === 'known', 
+                    'new': token.status === 'new' || !token.status 
+                  }"
+                  @click.stop="handleTokenClick(token)"
+                >{{ token.surface_form }}</span>
+              </template>
+            </span>
+            <span v-else class="furigana-container">
+              <template v-for="(token, index) in getProcessedTokens(caption)" :key="index">
+                <ruby 
+                  :class="{ 
+                    'word': true, 
+                    'known': token.status === 'known', 
+                    'new': token.status === 'new' || !token.status 
+                  }"
+                  @click.stop="handleTokenClick(token)"
+                >
+                  {{ token.surface_form }}
+                  <rt v-if="token.reading && token.reading !== token.surface_form && isJapaneseCharacter(token.surface_form)">
+                    {{ token.reading }}
+                  </rt>
+                </ruby>
+              </template>
+            </span>
+          </template>
         </div>
       </div>
       
@@ -935,8 +1318,10 @@ function onFullscreenChange() {
                 v-if="caption.startTime <= props.currentTime && props.currentTime <= caption.endTime"
                 class="subtitle-line secondary"
               >
-                <!-- Use v-html for formatted subtitles -->
-                <span v-html="cleanHtml(caption.text)"></span>
+                <!-- If caption has HTML formatting, use v-html -->
+                <span v-if="caption.text.includes('<font')" v-html="processSubtitleHtml(caption.text)"></span>
+                <!-- Otherwise use plain text -->
+                <span v-else>{{ caption.text }}</span>
               </div>
             </div>
           </template>
@@ -1148,6 +1533,7 @@ function onFullscreenChange() {
   -moz-user-select: none;
   -ms-user-select: none;
   outline: none;
+  font-size: v-bind('`${settings.primarySubtitleFontSize}rem`');
 }
 
 .primary-track {
@@ -1201,31 +1587,30 @@ function onFullscreenChange() {
 }
 
 .furigana-container {
+  display: inline-block;
   line-height: 1.5;
-  margin: 0;
-  padding: 0;
 }
 
-.furigana-container ruby {
-  ruby-align: center;
-  display: inline;
+ruby {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1.2;
+  text-align: center;
+  margin: 0 1px;
   position: relative;
-  margin: 0;
-  padding: 0;
 }
-.video-container > div > div > div:nth-child(1) > div > span {
-  /* styles will be inherited from .primary-track */
-}
-.video-container > div > div > div:nth-child(2) > div > span {
-  /* styles will be inherited from .secondary-track */
-}
-.furigana-container rt {
-  font-size: 0.5em;
+
+rt {
+  font-size: 0.6em;
   color: rgba(255, 255, 255, 0.9);
   line-height: 1;
-  text-shadow: 0 0 3px rgba(0, 0, 0, 0.8);
   text-align: center;
   white-space: nowrap;
+  position: absolute;
+  top: -1em;
+  left: 0;
+  right: 0;
 }
 
 .tokens-container {
@@ -1407,5 +1792,51 @@ function onFullscreenChange() {
 .anki-icon {
   font-weight: bold;
   font-size: 16px;
+}
+
+/* Add styles for Japanese text to ensure it's selectable */
+.japanese-text {
+  user-select: text;
+  cursor: text;
+}
+
+/* Make sure ruby elements are properly styled for Yomichan */
+ruby {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1.2;
+  text-align: center;
+  margin: 0 1px;
+  position: relative;
+}
+
+rt {
+  font-size: 0.6em;
+  color: rgba(255, 255, 255, 0.9);
+  line-height: 1;
+  text-align: center;
+  white-space: nowrap;
+  position: absolute;
+  top: -1em;
+  left: 0;
+  right: 0;
+}
+
+/* Add styles for word tokens */
+.word {
+  display: inline-block;
+  margin: 0 1px;
+  padding: 0 1px;
+}
+
+.word:hover {
+  background-color: rgba(255, 255, 255, 0.2);
+  border-radius: 2px;
+}
+
+/* Ensure subtitle font size changes are applied */
+.secondary-subtitle-line {
+  font-size: v-bind('`${settings.secondarySubtitleFontSize}rem`');
 }
 </style> 
