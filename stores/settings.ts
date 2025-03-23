@@ -17,6 +17,10 @@ interface Settings {
   secondarySubtitleFontWeight: number
   primarySubtitleShadow: string
   secondarySubtitleShadow: string
+  subtitleFontStyle: 'normal' | 'italic'
+  secondarySubtitleFontStyle: 'normal' | 'italic'
+  subtitleTextDecoration: 'none' | 'underline'
+  secondarySubtitleTextDecoration: 'none' | 'underline'
   regexReplacements: RegexReplacement[]
   regexReplacementsEnabled: boolean
   tokenizationMethod: 'kuromoji' | 'sudachi'
@@ -33,14 +37,18 @@ export const useSettingsStore = defineStore('settings', {
   state: (): Settings => ({
     videoAlignment: 'center',
     showVideoControls: true,
-    primarySubtitleFontSize: 1.5,
-    secondarySubtitleFontSize: 1.2,
+    primarySubtitleFontSize: 1.8,
+    secondarySubtitleFontSize: 1.4,
     subtitleFontFamily: 'Arial, sans-serif',
     secondarySubtitleFontFamily: 'Arial, sans-serif',
-    subtitleFontWeight: 500,
-    secondarySubtitleFontWeight: 700,
-    primarySubtitleShadow: '5px 5px 5px rgba(0,0,0,0.8), -5px -5px 5px rgba(0,0,0,0.8), 5px -5px 5px rgba(0,0,0,0.8), -5px 5px 5px rgba(0,0,0,0.8)',
-    secondarySubtitleShadow: '7px 7px 7px rgba(0,0,0,0.8), -7px -7px 7px rgba(0,0,0,0.8), 7px -7px 7px rgba(0,0,0,0.8), -7px 7px 7px rgba(0,0,0,0.8)',
+    subtitleFontWeight: 400,
+    secondarySubtitleFontWeight: 400,
+    primarySubtitleShadow: '2px 2px 3px rgba(0, 0, 0, 0.8)',
+    secondarySubtitleShadow: '2px 2px 3px rgba(0, 0, 0, 0.8)',
+    subtitleFontStyle: 'normal',
+    secondarySubtitleFontStyle: 'normal',
+    subtitleTextDecoration: 'none',
+    secondarySubtitleTextDecoration: 'none',
     regexReplacements: [
       { regex: '\\(\\(.*?\\)\\)', replaceText: '' },
       { regex: '\\(.*?\\)', replaceText: '' },
@@ -48,10 +56,10 @@ export const useSettingsStore = defineStore('settings', {
     ],
     regexReplacementsEnabled: true,
     tokenizationMethod: 'kuromoji',
-    colorizeWords: false,
+    colorizeWords: true,
     autoColorizeJapanese: true,
     hideControlButtons: false,
-    hidePlayerControls: true,
+    hidePlayerControls: false,
     videoPositions: {},
     ankiEnabled: true,
     showFurigana: true
@@ -127,23 +135,12 @@ export const useSettingsStore = defineStore('settings', {
     },
 
     adjustFontWeight(isSecondary: boolean, increase: boolean) {
-      const step = 100
-      const min = 100
-      const max = 900
-      
       if (isSecondary) {
-        this.secondarySubtitleFontWeight = Math.min(
-          Math.max(this.secondarySubtitleFontWeight + (increase ? step : -step), min),
-          max
-        )
+        this.secondarySubtitleFontWeight = increase ? 700 : 400;
       } else {
-        this.subtitleFontWeight = Math.min(
-          Math.max(this.subtitleFontWeight + (increase ? step : -step), min),
-          max
-        )
+        this.subtitleFontWeight = increase ? 700 : 400;
       }
-      
-      this.saveSettings()
+      this.saveSettings();
     },
 
     saveVideoPosition(videoPath: string, position: number) {

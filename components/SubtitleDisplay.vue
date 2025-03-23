@@ -39,4 +39,22 @@ const settings = useSettingsStore()
 function handleWordClick(token) {
   emit('word-click', token)
 }
-</script> 
+</script>
+
+<style>
+.subtitle-line {
+  font-family: v-bind('settings.subtitleFontFamily');
+  font-weight: v-bind('settings.subtitleFontWeight');
+  font-style: v-bind('settings.subtitleFontStyle');
+  text-decoration: v-bind('settings.subtitleTextDecoration');
+  /* Other styles... */
+}
+
+.secondary-subtitle-line {
+  font-family: v-bind('settings.secondarySubtitleFontFamily');
+  font-weight: v-bind('settings.secondarySubtitleFontWeight');
+  font-style: v-bind('settings.secondarySubtitleFontStyle');
+  text-decoration: v-bind('settings.secondarySubtitleTextDecoration');
+  /* Other styles... */
+}
+</style> 

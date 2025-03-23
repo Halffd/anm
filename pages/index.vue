@@ -33,6 +33,10 @@ const currentAudioTrack = ref(0)
 
 const isExporting = computed(() => unref(ankiExport.isExporting))
 
+// Add state for captions visibility
+const captionsVisible = ref(true)
+const captionsPanelVisible = ref(false)
+
 async function onFilesDrop(e: DragEvent) {
   e.preventDefault()
   const files = e.dataTransfer?.files
@@ -331,6 +335,37 @@ function onVideoEnd() {
     selectedVideo.value = playlist.value[currentPlaylistIndex.value]
   }
 }
+
+// Function to handle toggle captions event
+function handleToggleCaptions(visible: boolean) {
+  captionsVisible.value = visible
+  // You might want to update some UI or store this preference
+}
+
+// Function to handle subtitle file upload
+function handleSubtitleUpload(file: File) {
+  // Create a URL for the file
+  const url = URL.createObjectURL(file)
+  
+  // Load the subtitles using the correct method
+  captionsStore.loadCaptions(url, file.name)
+    .then(() => {
+      // Clean up the URL when done
+      URL.revokeObjectURL(url)
+    })
+    .catch((error: Error) => {
+      console.error('Error loading subtitles:', error)
+      // Show error notification
+      videoControls.showNotification('Error loading subtitles')
+    })
+}
+
+// Function to handle toggle captions panel
+function handleToggleCaptionsPanel(visible: boolean) {
+  captionsPanelVisible.value = visible
+  // Toggle the captions panel UI
+  // This might involve showing/hiding a sidebar or modal
+}
 </script>
 
 <template>
@@ -353,6 +388,9 @@ function onVideoEnd() {
         @playing="isPlaying = true"
         @pause="isPlaying = false"
         @ended="onVideoEnd"
+        @toggle-captions="handleToggleCaptions"
+        @subtitle-upload="handleSubtitleUpload"
+        @toggle-captions-panel="handleToggleCaptionsPanel"
         class="flex-1"
       />
     </template>

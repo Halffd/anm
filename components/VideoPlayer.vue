@@ -45,6 +45,9 @@ const emit = defineEmits<{
   'playing': []
   'pause': []
   'ended': []
+  'toggle-captions': [visible: boolean]
+  'subtitle-upload': [file: File]
+  'toggle-captions-panel': [visible: boolean]
 }>()
 
 const videoRef = ref<HTMLVideoElement>()
@@ -791,59 +794,23 @@ const subtitleFileInput = ref<HTMLInputElement>()
 
 function openSubtitleFileDialog() {
   if (!subtitleFileInput.value) {
-    // Create file input if it doesn't exist
-    subtitleFileInput.value = document.createElement('input')
-    subtitleFileInput.value.type = 'file'
-    subtitleFileInput.value.accept = '.srt,.vtt,.ass'
-    subtitleFileInput.value.style.display = 'none'
-    subtitleFileInput.value.addEventListener('change', handleSubtitleFile)
-    document.body.appendChild(subtitleFileInput.value)
+    return
   }
   subtitleFileInput.value.click()
 }
 
-async function handleSubtitleFile(event: Event) {
-  const input = event.target as HTMLInputElement
-  const file = input.files?.[0]
-  if (!file) return
-
-  try {
-    // Read file content
-    const content = await file.text()
-    
-    // Extract language and title from filename
-    const filenameParts = file.name.split('.')
-    const extension = filenameParts.pop()?.toLowerCase()
-    const nameParts = filenameParts.join('.').split('_')
-    
-    let language = 'unknown'
-    let title = file.name
-    
-    if (nameParts.length >= 3) {
-      // Assume format is filename_language_title
-      language = nameParts[nameParts.length - 2]
-      title = nameParts[nameParts.length - 1]
-    } else if (filenameParts.length >= 2) {
-      // Try format filename.language.ext
-      language = filenameParts[filenameParts.length - 1]
-      title = filenameParts[0]
-    }
-    
-    // Load captions
-    const trackIndex = await store.loadCaptions(content, language, title)
-    
-    if (trackIndex !== null) {
-      emit('notify', `Added subtitle track: ${file.name}`)
-    } else {
-      emit('notify', 'Failed to parse subtitle file')
-    }
-  } catch (e) {
-    emit('notify', `Failed to load subtitle: ${e instanceof Error ? e.message : 'Unknown error'}`)
-  }
-
-  // Reset input
-  input.value = ''
+// Add these functions with new names to avoid conflicts
+function handleToggleCaptions() {
+  captionsVisible.value = !captionsVisible.value
+  emit('toggle-captions', captionsVisible.value)
 }
+
+function handleToggleCaptionsPanel() {
+  captionsPanelVisible.value = !captionsPanelVisible.value
+  emit('toggle-captions-panel', captionsPanelVisible.value)
+}
+
+// Update the template to use the new function names
 
 // Add function to toggle between primary and secondary subtitles
 function togglePrimarySecondary() {
@@ -1254,6 +1221,49 @@ function getSubtitleLanguage(): string {
   // Default to Japanese if no language is specified
   return 'ja';
 }
+
+// Add ref for settings menu
+const showSettingsMenu = ref(false)
+
+// Add function to toggle settings menu
+function toggleSettingsMenu() {
+  showSettingsMenu.value = !showSettingsMenu.value
+}
+
+// Add refs for new functionality
+const captionsVisible = ref(true)
+const captionsPanelVisible = ref(false)
+
+// Function to toggle captions visibility
+function toggleCaptions() {
+  captionsVisible.value = !captionsVisible.value
+  emit('toggle-captions', captionsVisible.value)
+}
+
+// Function to toggle captions panel
+function toggleCaptionsPanel() {
+  captionsPanelVisible.value = !captionsPanelVisible.value
+  emit('toggle-captions-panel', captionsPanelVisible.value)
+}
+
+// Function to open file input for subtitle upload
+function openSubtitleFileDialog() {
+  if (!subtitleFileInput.value) {
+    return
+  }
+  subtitleFileInput.value.click()
+}
+
+// Function to handle subtitle file upload
+function handleSubtitleFileUpload(event) {
+  const file = event.target.files[0]
+  if (!file) return
+  
+  emit('subtitle-upload', file)
+  
+  // Reset the input so the same file can be selected again
+  event.target.value = ''
+}
 </script>
 
 <template>
@@ -1387,12 +1397,165 @@ function getSubtitleLanguage(): string {
             <span class="anki-icon">A</span>
           </button>
           
-          <button class="control-button" @click.stop="toggleFullscreen" title="Fullscreen (f)">
-            <svg viewBox="0 0 24 24" class="fullscreen-icon">
-              <path v-if="isFullscreen" d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z" />
-              <path v-else d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z" />
+          <!-- Existing controls -->
+          <button 
+            class="control-button" 
+            @click="toggleFullscreen"
+            title="Fullscreen (f)"
+          >
+            <svg v-if="isFullscreen" viewBox="0 0 24 24">
+              <path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/>
+            </svg>
+            <svg v-else viewBox="0 0 24 24">
+              <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/>
             </svg>
           </button>
+          
+          <!-- Add settings button -->
+          <button 
+            class="control-button" 
+            @click="toggleSettingsMenu"
+            title="Settings"
+          >
+            <svg viewBox="0 0 24 24">
+              <path d="M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.07-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61 l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41 h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.74,8.87 C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.8,11.69,4.8,12s0.02,0.64,0.07,0.94l-2.03,1.58 c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54 c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.44-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96 c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.47-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6 s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z"/>
+            </svg>
+          </button>
+          
+          <!-- Toggle Captions Button -->
+          <button 
+            class="control-button" 
+            @click="handleToggleCaptions"
+            title="Toggle Captions"
+          >
+            <svg viewBox="0 0 24 24">
+              <path d="M20,4H4C2.9,4,2,4.9,2,6v12c0,1.1,0.9,2,2,2h16c1.1,0,2-0.9,2-2V6C22,4.9,21.1,4,20,4z M20,18H4V6h16V18z M6,10h2v2H6V10z M6,14h8v2H6V14z M16,14h2v2h-2V14z M10,10h8v2h-8V10z"/>
+            </svg>
+          </button>
+          
+          <!-- Load Subtitles Button -->
+          <button 
+            class="control-button" 
+            @click="openSubtitleFileDialog"
+            title="Load Subtitles"
+          >
+            <svg viewBox="0 0 24 24">
+              <path d="M19,13h-6v6h-2v-6H5v-2h6V5h2v6h6V13z"/>
+            </svg>
+            <input 
+              type="file" 
+              ref="subtitleFileInput" 
+              @change="handleSubtitleFileChange" 
+              accept=".srt,.vtt,.ass" 
+              style="display: none;"
+            />
+          </button>
+          
+          <!-- Open Captions Panel Button -->
+          <button 
+            class="control-button" 
+            @click="handleToggleCaptionsPanel"
+            title="Captions Panel"
+          >
+            <svg viewBox="0 0 24 24">
+              <path d="M21,3H3C1.9,3,1,3.9,1,5v14c0,1.1,0.9,2,2,2h18c1.1,0,2-0.9,2-2V5C23,3.9,22.1,3,21,3z M21,19H3V5h18V19z M9,8h2v8H9V8z M12,8h2v8h-2V8z M15,8h2v8h-2V8z M6,8h2v8H6V8z"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add settings menu overlay -->
+  <div 
+    v-if="showSettingsMenu" 
+    class="settings-menu-overlay"
+    @click.self="showSettingsMenu = false"
+  >
+    <div class="settings-menu">
+      <div class="settings-header">
+        <h3>Settings</h3>
+        <button @click="showSettingsMenu = false" class="close-button">×</button>
+      </div>
+      
+      <div class="settings-section">
+        <h4>Video</h4>
+        <div class="setting-item">
+          <label>Video Alignment</label>
+          <div class="setting-controls">
+            <select v-model="settings.videoAlignment" @change="settings.saveSettings()">
+              <option value="left">Left</option>
+              <option value="center">Center</option>
+              <option value="right">Right</option>
+            </select>
+          </div>
+        </div>
+        
+        <div class="setting-item">
+          <label>Show Video Controls</label>
+          <div class="setting-controls">
+            <input type="checkbox" v-model="settings.showVideoControls" @change="settings.saveSettings()">
+          </div>
+        </div>
+      </div>
+      
+      <div class="settings-section">
+        <h4>Primary Subtitles</h4>
+        <div class="setting-item">
+          <label>Font Size</label>
+          <div class="setting-controls">
+            <button @click="settings.adjustFontSize(false, false)">-</button>
+            <span>{{ settings.primarySubtitleFontSize.toFixed(1) }}</span>
+            <button @click="settings.adjustFontSize(false, true)">+</button>
+          </div>
+        </div>
+        
+        <div class="setting-item">
+          <label>Font Family</label>
+          <div class="setting-controls">
+            <select v-model="settings.subtitleFontFamily" @change="settings.saveSettings()">
+              <option value="Arial, sans-serif">Arial</option>
+              <option value="'Noto Sans JP', sans-serif">Noto Sans JP</option>
+              <option value="'Hiragino Kaku Gothic Pro', sans-serif">Hiragino</option>
+              <option value="'MS Gothic', sans-serif">MS Gothic</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      
+      <div class="settings-section">
+        <h4>Secondary Subtitles</h4>
+        <div class="setting-item">
+          <label>Font Size</label>
+          <div class="setting-controls">
+            <button @click="settings.adjustFontSize(true, false)">-</button>
+            <span>{{ settings.secondarySubtitleFontSize.toFixed(1) }}</span>
+            <button @click="settings.adjustFontSize(true, true)">+</button>
+          </div>
+        </div>
+      </div>
+      
+      <div class="settings-section">
+        <h4>Features</h4>
+        <div class="setting-item">
+          <label>Show Furigana</label>
+          <div class="setting-controls">
+            <input type="checkbox" v-model="settings.showFurigana" @change="settings.saveSettings()">
+          </div>
+        </div>
+        
+        <div class="setting-item">
+          <label>Colorize Words</label>
+          <div class="setting-controls">
+            <input type="checkbox" v-model="settings.colorizeWords" @change="settings.saveSettings()">
+          </div>
+        </div>
+        
+        <div class="setting-item">
+          <label>Anki Integration</label>
+          <div class="setting-controls">
+            <input type="checkbox" v-model="settings.ankiEnabled" @change="settings.saveSettings()">
+          </div>
         </div>
       </div>
     </div>
@@ -1879,5 +2042,176 @@ rt {
 
 .video-container:hover .custom-controls-container {
   transition-delay: 0s;
+}
+
+/* Add styles for settings menu */
+.settings-menu-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.7);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
+
+.settings-menu {
+  background-color: #1f2937;
+  border-radius: 8px;
+  width: 90%;
+  max-width: 500px;
+  max-height: 80vh;
+  overflow-y: auto;
+  color: white;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.settings-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px;
+  border-bottom: 1px solid #374151;
+}
+
+.settings-header h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.close-button {
+  background: transparent;
+  border: none;
+  color: white;
+  font-size: 24px;
+  cursor: pointer;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+}
+
+.close-button:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+.settings-section {
+  padding: 16px;
+  border-bottom: 1px solid #374151;
+}
+
+.settings-section h4 {
+  margin: 0 0 12px 0;
+  font-size: 16px;
+  font-weight: 500;
+  color: #9ca3af;
+}
+
+.setting-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.setting-item:last-child {
+  margin-bottom: 0;
+}
+
+.setting-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.setting-controls button {
+  background-color: #4b5563;
+  border: none;
+  color: white;
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.setting-controls button:hover {
+  background-color: #6b7280;
+}
+
+.setting-controls select {
+  background-color: #4b5563;
+  border: none;
+  color: white;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.setting-controls input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+}
+
+/* Add styles for font style buttons */
+.font-style-controls {
+  display: flex;
+  gap: 4px;
+}
+
+.font-style-btn {
+  width: 30px !important;
+  height: 30px !important;
+  font-weight: bold;
+  font-family: serif;
+}
+
+.font-style-btn.active {
+  background-color: #60a5fa !important;
+  color: #fff;
+}
+
+/* Make sure the button for italic actually shows as italic */
+.font-style-btn:nth-child(2) {
+  font-style: italic;
+}
+
+/* Add some spacing between the control buttons */
+.right-controls {
+  display: flex;
+  gap: 8px;
+}
+
+/* Make sure the control buttons are properly sized */
+.control-button {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  color: white;
+}
+
+.control-button svg {
+  width: 24px;
+  height: 24px;
+  fill: currentColor;
+}
+
+.control-button:hover {
+  background: rgba(0, 0, 0, 0.7);
 }
 </style> 
