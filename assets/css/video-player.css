@@ -1,0 +1,111 @@
+/* Video player shared styles */
+
+/* Container styles */
+.video-container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background-color: black;
+  overflow: hidden;
+}
+
+.video-element {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* Video alignment classes */
+.align-left .video-element {
+  object-position: left center;
+}
+
+.align-center .video-element {
+  object-position: center center;
+}
+
+.align-right .video-element {
+  object-position: right center;
+}
+
+/* Control button styles */
+.control-button {
+  background: transparent;
+  border: none;
+  color: white;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background-color 0.2s;
+  flex-shrink: 0;
+}
+
+.control-button:hover {
+  background-color: rgba(255, 255, 255, 0.2);
+}
+
+.control-button svg {
+  width: 20px;
+  height: 20px;
+  fill: currentColor;
+}
+
+/* Slider styles */
+.video-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.3);
+  border-radius: 2px;
+  outline: none;
+  transition: background 0.2s;
+}
+
+.video-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  background: white;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.video-slider::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  background: white;
+  border-radius: 50%;
+  cursor: pointer;
+  border: none;
+}
+
+.video-slider:hover {
+  background: rgba(255, 255, 255, 0.4);
+}
+
+/* Font Style Controls */
+.font-style-controls {
+  display: flex;
+  gap: 4px;
+}
+
+.font-style-btn {
+  width: 30px !important;
+  height: 30px !important;
+  font-weight: bold;
+  font-family: serif;
+}
+
+.font-style-btn.active {
+  background-color: #60a5fa !important;
+  color: #fff;
+}
+
+.font-style-btn:nth-child(2) {
+  font-style: italic;
+} 

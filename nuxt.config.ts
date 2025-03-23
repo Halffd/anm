@@ -8,7 +8,7 @@ export default defineNuxtConfig({
   ],
 
   devtools: {
-    enabled: false
+    enabled: true
   },
 
   typescript: {
@@ -49,5 +49,10 @@ export default defineNuxtConfig({
         lang: 'en'
       }
     }
-  }
+  },
+
+  css: [
+    '@/assets/css/main.css',
+    '@/assets/css/video-player.css',
+  ],
 })
