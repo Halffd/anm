@@ -701,7 +701,9 @@ function skipTime(seconds: number) {
   const video = videoRef.value
   if (!video) return
   
-  video.currentTime += seconds
+  const newTime = video.currentTime + seconds;
+  video.currentTime = Math.max(0, Math.min(newTime, video.duration));
+  emit('timeupdate', video.currentTime);
 }
 
 function increasePlaybackRate() {
@@ -1238,6 +1240,20 @@ function isJapaneseCharacter(text: string): boolean {
   // Check if the text contains Japanese characters
   return /[\u3000-\u303f\u3040-\u309f\u30a0-\u30ff\uff00-\uff9f\u4e00-\u9faf\u3400-\u4dbf]/.test(text);
 }
+
+// Add function to determine subtitle language
+function getSubtitleLanguage(): string {
+  // Get the active subtitle track
+  const activeTrack = store.activeTrack;
+  
+  // Return the language code if available, otherwise default to Japanese
+  if (activeTrack && 'language' in activeTrack) {
+    return (activeTrack as any).language || 'ja';
+  }
+  
+  // Default to Japanese if no language is specified
+  return 'ja';
+}
 </script>
 
 <template>
@@ -1268,44 +1284,25 @@ function isJapaneseCharacter(text: string): boolean {
     </video>
 
     <!-- Subtitles container -->
-    <div v-if="store.showSubtitles" class="subtitles-container" :class="{ 'no-controls': !settings.showVideoControls }" lang="ja" data-yomichan-enable="true">
+    <div v-if="store.showSubtitles" class="subtitles-container" :class="{ 'no-controls': !settings.showVideoControls }" :lang="getSubtitleLanguage()" data-yomitan-enable="true">
       <!-- Primary subtitles -->
       <div v-for="caption in store.activeCaptions" :key="caption.id" class="subtitle-wrapper">
         <div class="subtitle-line">
           <!-- If caption has HTML formatting, use v-html -->
-          <span v-if="caption.text.includes('<font')" v-html="processSubtitleHtml(caption.text)"></span>
+          <span v-if="caption.text.includes('<')" v-html="caption.text"></span>
           <!-- Otherwise use tokenized display with furigana -->
-          <template v-else>
-            <span v-if="!getShowFurigana()" class="japanese-text">
-              <template v-for="(token, index) in getProcessedTokens(caption)" :key="index">
-                <span 
-                  :class="{ 
-                    'word': true, 
-                    'known': token.status === 'known', 
-                    'new': token.status === 'new' || !token.status 
-                  }"
-                  @click.stop="handleTokenClick(token)"
-                >{{ token.surface_form }}</span>
-              </template>
-            </span>
-            <span v-else class="furigana-container">
-              <template v-for="(token, index) in getProcessedTokens(caption)" :key="index">
-                <ruby 
-                  :class="{ 
-                    'word': true, 
-                    'known': token.status === 'known', 
-                    'new': token.status === 'new' || !token.status 
-                  }"
-                  @click.stop="handleTokenClick(token)"
-                >
-                  {{ token.surface_form }}
-                  <rt v-if="token.reading && token.reading !== token.surface_form && isJapaneseCharacter(token.surface_form)">
-                    {{ token.reading }}
-                  </rt>
-                </ruby>
-              </template>
-            </span>
-          </template>
+          <span v-else class="japanese-text">
+            <template v-for="(token, index) in getProcessedTokens(caption)" :key="index">
+              <span 
+                :class="{ 
+                  'word': true, 
+                  'known': token.status === 'known', 
+                  'new': token.status === 'new' || !token.status 
+                }"
+                @click.stop="handleTokenClick(token)"
+              >{{ token.surface_form }}</span>
+            </template>
+          </span>
         </div>
       </div>
       
@@ -1319,7 +1316,7 @@ function isJapaneseCharacter(text: string): boolean {
                 class="subtitle-line secondary"
               >
                 <!-- If caption has HTML formatting, use v-html -->
-                <span v-if="caption.text.includes('<font')" v-html="processSubtitleHtml(caption.text)"></span>
+                <span v-if="caption.text.includes('<')" v-html="processSubtitleHtml(caption.text)"></span>
                 <!-- Otherwise use plain text -->
                 <span v-else>{{ caption.text }}</span>
               </div>
@@ -1647,7 +1644,7 @@ rt {
   background: linear-gradient(transparent, rgba(0, 0, 0, 0.7));
   padding: 10px;
   transition: opacity 0.3s ease;
-  opacity: 0;
+  opacity: 1;
   z-index: 100;
 }
 
@@ -1796,11 +1793,14 @@ rt {
 
 /* Add styles for Japanese text to ensure it's selectable */
 .japanese-text {
-  user-select: text;
+  user-select: text !important;
   cursor: text;
+  -webkit-user-select: text !important;
+  -moz-user-select: text !important;
+  -ms-user-select: text !important;
 }
 
-/* Make sure ruby elements are properly styled for Yomichan */
+/* Make sure ruby elements are properly styled for Yomitan */
 ruby {
   display: inline-flex;
   flex-direction: column;
@@ -1809,6 +1809,10 @@ ruby {
   text-align: center;
   margin: 0 1px;
   position: relative;
+  user-select: text !important;
+  -webkit-user-select: text !important;
+  -moz-user-select: text !important;
+  -ms-user-select: text !important;
 }
 
 rt {
@@ -1821,6 +1825,8 @@ rt {
   top: -1em;
   left: 0;
   right: 0;
+  user-select: none;
+  pointer-events: none;
 }
 
 /* Add styles for word tokens */
@@ -1828,6 +1834,10 @@ rt {
   display: inline-block;
   margin: 0 1px;
   padding: 0 1px;
+  user-select: text !important;
+  -webkit-user-select: text !important;
+  -moz-user-select: text !important;
+  -ms-user-select: text !important;
 }
 
 .word:hover {
@@ -1838,5 +1848,36 @@ rt {
 /* Ensure subtitle font size changes are applied */
 .secondary-subtitle-line {
   font-size: v-bind('`${settings.secondarySubtitleFontSize}rem`');
+}
+
+/* Update the custom controls container to show/hide based on hover */
+.custom-controls-container {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 10px;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.7));
+  transition: opacity 0.3s ease;
+  opacity: 1;
+}
+
+/* Show controls when hovering over the video container */
+.video-container:hover .custom-controls-container {
+  opacity: 1;
+}
+
+/* Hide controls after a delay when not hovering */
+.video-container:not(:hover) .custom-controls-container {
+  opacity: 0;
+}
+
+/* Add a delay before hiding controls */
+.video-container .custom-controls-container {
+  transition-delay: 0.5s;
+}
+
+.video-container:hover .custom-controls-container {
+  transition-delay: 0s;
 }
 </style> 
