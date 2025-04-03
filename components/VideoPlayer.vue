@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, computed, onUnmounted, onMounted } from 'vue'
+import { ref, watch, computed, onUnmounted, onMounted, nextTick, onBeforeUnmount } from 'vue'
 import type { Caption } from '~/types'
 import { useCaptionsStore } from '~/stores/captions'
 import { useSettingsStore } from '~/stores/settings'
@@ -13,36 +13,13 @@ import { useInputHandlers } from '~/composables/useInputHandlers'
 import { useVideoPlayer } from '~/composables/useVideoPlayer'
 import { useCaptionsControl } from '~/composables/useCaptionsControl'
 import { useVideoMetadata } from '~/composables/useVideoMetadata'
-import SubtitleDisplay from '~/components/SubtitleDisplay.vue'
-import SubtitleComponent from './SubtitleComponent.vue'
-import { parseAss, parseVtt, parseSrt } from '../utils/subtitleParsers'
+import VideoJSPlayer from '~/components/VideoJSPlayer.vue'
+import { loadSubtitleFile } from '~/utils/subtitleLoader'
 
 // Get utilities
 const { createKeyboardHandler } = useInputHandlers()
 
-// Define Token interface
-interface Token {
-  surface_form: string;
-  surface: string;
-  reading: string;
-  pos: string;
-  basic_form: string;
-  isHighlighted: boolean;
-  status?: 'new' | 'known' | 'mature';
-}
-
-// Define HTMLVideoElementWithAudioTracks interface
-interface HTMLVideoElementWithAudioTracks extends HTMLVideoElement {
-  audioTracks?: {
-    length: number
-    [index: number]: {
-      enabled: boolean
-      language?: string
-      label?: string
-    }
-  }
-}
-
+// Define props and emits
 const props = defineProps<{
   videoUrl?: string | null
   captions: Caption[]
@@ -62,360 +39,419 @@ const emit = defineEmits<{
   'toggle-captions': [visible: boolean]
   'subtitle-upload': [file: File]
   'toggle-captions-panel': [visible: boolean]
+  'toggle-sidebar': [value: boolean]
 }>()
 
+// Store and state
 const store = useCaptionsStore()
 const settings = useSettingsStore()
 const videoControls = useVideoControls()
 const ankiExtension = useAnkiExtension()
 
-// Add SPACE_DELAY at top level
-const SPACE_DELAY = 300 // Delay between space presses in ms
+// Player state
+const player = ref(null)
+const isPlaying = ref(false)
+const currentTime = ref(0)
+const videoDuration = ref(0)
+const volume = ref(1)
+const isMuted = ref(false)
+const isFullscreen = ref(false)
+const subtitleTracks = ref([])
+const showSubtitles = ref(true)
 
-const showSubtitleInfo = ref(false)
+// UI state
 const isHovering = ref(false)
 const lastMouseMoveTime = ref(Date.now())
 const controlsHidden = ref(false)
-const showSubtitleList = ref(true)
 const showControls = ref(true)
 const showSettingsMenu = ref(false)
 
-// Use the video player composable
-const {
-  videoRef,
-  isPlaying,
-  volume,
-  isMuted,
-  isFullscreen,
-  videoDuration,
-  playbackRate,
-  audioTracks,
-  selectedAudioTrack,
-  captionsUrl,
-  togglePlayPause,
-  seek,
-  handleVolumeChange,
-  toggleMute,
-  toggleFullscreen,
-  onFullscreenChange,
-  onTimeUpdate: videoPlayerTimeUpdate,
-  onDurationChange,
-  onVideoEnded,
-  adjustPlaybackRate: videoPlayerAdjustPlaybackRate,
-  cycleAudioTrack
-} = useVideoPlayer(props)
-
-// Use the captions control composable
-const {
-  captionsVisible,
-  captionsPanelVisible,
-  toggleCaptions,
-  toggleCaptionsPanel
-} = useCaptionsControl()
-
-// Use the video metadata composable
-const {
-  videoTitle,
-  videoLanguage,
-  videoSource,
-  videoAlignmentStyle,
-  updateMetadata,
-  detectVideoLanguage
-} = useVideoMetadata({
-  videoUrl: props.videoUrl,
-  videoAlignment: props.videoAlignment,
-  settingsAlignment: settings.videoAlignment
+// Video source
+const videoSource = computed(() => {
+  return props.videoUrl || ''
 })
 
-// Update hasSubtitles to use allActiveCaptions instead of activeCaptions
-const hasSubtitles = computed(() => store.showSubtitles && store.allActiveCaptions.length > 0)
-
-// Add computed property to check if we have secondary subtitles
-const hasSecondarySubtitles = computed(() => {
-  // Check if we have any active captions from secondary tracks
-  return store.subtitleTracks.some((track, index) => 
-    index !== store.activeTrackIndex && 
-    track.captions.some(caption => 
-      caption.startTime <= props.currentTime && 
-      props.currentTime <= caption.endTime
-    )
-  )
-})
-
-// Add function to handle time updates
-function handleTimeUpdate() {
-  if (videoRef.value) {
-    emit('timeupdate', videoRef.value.currentTime)
-  }
+// Player event handlers
+function onPlayerReady(player) {
+  console.log('Player is ready')
 }
 
-function onError(e: Event) {
-  const video = e.target as HTMLVideoElement
-  emit('error', new Error(video.error?.message || 'Video error'))
+function onPlay() {
+  isPlaying.value = true
+  emit('playing')
 }
 
-// Function to handle mouse movement
-function handleMouseMove() {
-  isHovering.value = true
-  lastMouseMoveTime.value = Date.now()
-  controlsHidden.value = false
+function onPause() {
+  isPlaying.value = false
+  emit('pause')
 }
 
-// Function to toggle controls visibility
-function toggleControlsVisibility() {
-  controlsHidden.value = !controlsHidden.value
+function onTimeUpdate(time) {
+  currentTime.value = time
+  emit('timeupdate', time)
 }
 
-function onMetadataLoaded(e: Event) {
-  const video = e.target as HTMLVideoElementWithAudioTracks
-  
-  // Set video duration and title
-  if (video) {
-    videoDuration.value = video.duration
-  }
-  
-  // Check for audio tracks
-  if (video?.audioTracks && video.audioTracks.length > 0) {
-    for (let i = 0; i < video.audioTracks.length; i++) {
-      audioTracks.value.push({
-        enabled: video.audioTracks[i].enabled,
-        language: video.audioTracks[i].language,
-        label: video.audioTracks[i].label
-      })
+function onEnded() {
+  emit('ended')
+}
+
+function onError(error) {
+  emit('error', new Error(error.message || 'Video playback error'))
+}
+
+// Player controls
+function togglePlayPause() {
+  if (player.value) {
+    if (isPlaying.value) {
+      player.value.pause()
+    } else {
+      player.value.play()
     }
   }
 }
 
-function enableAudioTrack(index: number) {
-  const video = videoRef.value as HTMLVideoElementWithAudioTracks | undefined
-  if (!video?.audioTracks) return
-  
-  for (let i = 0; i < video.audioTracks.length; i++) {
-    video.audioTracks[i].enabled = (i === index)
-  }
-  
-  selectedAudioTrack.value = index
-  
-  if (props.onAudioTrackChange) {
-    props.onAudioTrackChange(index)
+function seek(time) {
+  if (player.value) {
+    player.value.currentTime(time)
   }
 }
 
-// Format time in MM:SS or HH:MM:SS format
-function formatTime(seconds: number): string {
-  if (isNaN(seconds)) return '00:00'
-  
-  const hours = Math.floor(seconds / 3600)
-  const minutes = Math.floor((seconds % 3600) / 60)
-  const secs = Math.floor(seconds % 60)
-  
-  if (hours > 0) {
-    return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
+function handleVolumeChange(newVolume) {
+  volume.value = newVolume
+  if (player.value) {
+    player.value.volume(newVolume)
   }
-  return `${minutes}:${secs.toString().padStart(2, '0')}`
 }
 
-// Add subtitle file input
-const subtitleFileInput = ref<HTMLInputElement>()
-
-function openSubtitleFileDialog() {
-  if (!subtitleFileInput.value) {
-    return
+function toggleMute() {
+  isMuted.value = !isMuted.value
+  if (player.value) {
+    player.value.muted(isMuted.value)
   }
-  subtitleFileInput.value.click()
 }
 
-// Add function to toggle settings menu
+function toggleFullscreen() {
+  if (player.value) {
+    if (isFullscreen.value) {
+      player.value.exitFullscreen()
+    } else {
+      player.value.requestFullscreen()
+    }
+    isFullscreen.value = !isFullscreen.value
+  }
+}
+
+// Subtitle handling
+async function handleSubtitleUpload(file) {
+  try {
+    const track = await loadSubtitleFile(file)
+    subtitleTracks.value.push(track)
+    emit('notify', `Loaded subtitle: ${file.name}`)
+  } catch (error) {
+    console.error('Error loading subtitle:', error)
+    emit('error', new Error(`Failed to load subtitle: ${error.message}`))
+  }
+}
+
+function handleToggleCaptions(visible) {
+  showSubtitles.value = visible
+  if (player.value) {
+    const tracks = player.value.textTracks()
+    for (let i = 0; i < tracks.length; i++) {
+      tracks[i].mode = visible ? 'showing' : 'hidden'
+    }
+  }
+  emit('toggle-captions', visible)
+}
+
+function handleToggleCaptionsPanel(visible) {
+  emit('toggle-captions-panel', visible)
+}
+
+// Word click handler for dictionary lookup
+function handleWordClick(word) {
+  console.log(`Word clicked: ${word}`)
+  // Implement dictionary lookup or Anki export
+  if (ankiExtension.isExtensionAvailable) {
+    ankiExtension.lookupWord(word)
+  }
+}
+
+// Mouse movement handler
+function handleMouseMove() {
+  isHovering.value = true
+  lastMouseMoveTime.value = Date.now()
+  
+  // Hide controls after inactivity
+  setTimeout(() => {
+    if (Date.now() - lastMouseMoveTime.value > 3000) {
+      isHovering.value = false
+    }
+  }, 3000)
+}
+
+// Toggle settings menu
 function toggleSettingsMenu() {
   showSettingsMenu.value = !showSettingsMenu.value
 }
 
-// Add function to handle toggle captions
-function handleToggleCaptions(visible: boolean) {
-  toggleCaptions()
-  emit('toggle-captions', visible)
-}
-
-// Add function to handle toggle captions panel
-function handleToggleCaptionsPanel(visible: boolean) {
-  toggleCaptionsPanel()
-  emit('toggle-captions-panel', visible)
-}
-
-// Setup keyboard shortcuts
-const keyboardShortcuts = {
-  ' ': togglePlayPause,
-  'ArrowLeft': () => seek(props.currentTime - 5),
-  'ArrowRight': () => seek(props.currentTime + 5),
-  'ArrowUp': () => handleVolumeChange(Math.min(1, volume.value + 0.1)),
-  'ArrowDown': () => handleVolumeChange(Math.max(0, volume.value - 0.1)),
-  'm': toggleMute,
-  'f': toggleFullscreen,
-  'c': handleToggleCaptions,
-  'p': handleToggleCaptionsPanel,
-  's': toggleSettingsMenu,
-  'y': toggleControlsVisibility
-}
-
-// Register keyboard handler
+// Load initial subtitles
 onMounted(() => {
-  const handleKeyDown = createKeyboardHandler(keyboardShortcuts)
-  document.addEventListener('keydown', handleKeyDown)
-  
-  // Set up auto-hide timer for controls
-  const autoHideInterval = setInterval(() => {
-    if (isPlaying.value && Date.now() - lastMouseMoveTime.value > 3000) {
-      isHovering.value = false
+  // Convert existing captions to subtitle tracks
+  if (props.captions && props.captions.length > 0) {
+    // Create a blob URL for the captions
+    const captionsText = convertCaptionsToSrt(props.captions)
+    const blob = new Blob([captionsText], { type: 'application/x-subrip' })
+    const url = URL.createObjectURL(blob)
+    
+    subtitleTracks.value.push({
+      src: url,
+      language: 'Default',
+      format: 'srt'
+    })
+  }
+})
+
+// Clean up blob URLs on unmount
+onUnmounted(() => {
+  subtitleTracks.value.forEach(track => {
+    if (track.src.startsWith('blob:')) {
+      URL.revokeObjectURL(track.src)
     }
-  }, 1000)
-  
-  // Cleanup on unmount
-  onUnmounted(() => {
-    document.removeEventListener('keydown', handleKeyDown)
-    clearInterval(autoHideInterval)
   })
 })
 
-// Setup event listeners
-onMounted(() => {
-  document.addEventListener('fullscreenchange', onFullscreenChange)
-})
+// Helper to convert captions to SRT format
+function convertCaptionsToSrt(captions) {
+  return captions.map((caption, index) => {
+    const startTime = formatSrtTime(caption.startTime)
+    const endTime = formatSrtTime(caption.endTime)
+    return `${index + 1}\n${startTime} --> ${endTime}\n${caption.text}\n`
+  }).join('\n')
+}
 
-onUnmounted(() => {
-  document.removeEventListener('fullscreenchange', onFullscreenChange)
-})
+// Format time for SRT
+function formatSrtTime(seconds) {
+  const date = new Date(seconds * 1000)
+  const hours = date.getUTCHours().toString().padStart(2, '0')
+  const minutes = date.getUTCMinutes().toString().padStart(2, '0')
+  const secs = date.getUTCSeconds().toString().padStart(2, '0')
+  const ms = date.getUTCMilliseconds().toString().padStart(3, '0')
+  return `${hours}:${minutes}:${secs},${ms}`
+}
 
-// Add computed properties for tokens if they don't exist
-const activeTokens = computed(() => store.activeTokens || [])
-const secondaryActiveTokens = computed(() => store.secondaryActiveTokens || [])
+// Add these new state variables
+const sidebarActive = ref(false);
+const activeSubtitleTrack = ref(0);
+const fontSize = ref(1.0);
+const subtitleDelay = ref(0);
 
-const primaryTrackIndex = ref(0)
-const secondaryTrackIndex = ref(1)
-const showPrimaryTrack = ref(true)
-const showSecondaryTrack = ref(true)
-const subtitleTracks = ref([])
+// Toggle sidebar
+function toggleSidebar(value = null) {
+  sidebarActive.value = value !== null ? value : !sidebarActive.value;
+  
+  // Resize player when sidebar state changes
+  nextTick(() => {
+    if (player.value) {
+      player.value.play(); // Trigger resize
+    }
+  });
+}
 
-async function loadSubtitles() {
-  try {
-    // Load primary subtitle (Japanese)
-    const jpnResponse = await fetch('path/to/japanese.ass')
-    const jpnContent = await jpnResponse.text()
-    const jpnLines = parseAss(jpnContent)
-    
-    // Load secondary subtitle (English)
-    const engResponse = await fetch('path/to/english.srt')
-    const engContent = await engResponse.text()
-    const engLines = parseSrt(engContent)
-    
-    subtitleTracks.value = [
-      {
-        id: 'jpn',
-        language: 'Japanese',
-        lines: jpnLines,
-        format: 'ass',
-        delay: 0
-      },
-      {
-        id: 'eng',
-        language: 'English',
-        lines: engLines,
-        format: 'srt',
-        delay: 0
-      }
-    ]
-  } catch (error) {
-    console.error('Error loading subtitles:', error)
+// Set active subtitle track
+function setActiveSubtitleTrack(index) {
+  activeSubtitleTrack.value = index;
+  if (player.value) {
+    player.value.showTextTrack(index, true);
   }
 }
 
-onMounted(() => {
-  loadSubtitles()
-})
-
-function handleWordClick(word: string, trackId: string) {
-  console.log(`Word clicked: ${word} from track: ${trackId}`)
-  // Implement dictionary lookup or other functionality
+// Toggle subtitle track visibility
+function toggleSubtitleTrack(index) {
+  if (activeSubtitleTrack.value === index) {
+    activeSubtitleTrack.value = -1; // Hide all
+    if (player.value) {
+      player.value.showTextTrack(index, false);
+    }
+  } else {
+    setActiveSubtitleTrack(index);
+  }
 }
+
+// Adjust font size
+function adjustFontSize(increase) {
+  fontSize.value = Math.max(0.5, Math.min(2.0, fontSize.value + (increase ? 0.1 : -0.1)));
+  
+  // Apply font size to subtitles
+  const subtitleElements = document.querySelectorAll('.vjs-ass-subtitles, .vjs-text-track-display');
+  subtitleElements.forEach(el => {
+    (el as HTMLElement).style.fontSize = `${fontSize.value}em`;
+  });
+}
+
+// Adjust subtitle delay
+function adjustDelay(amount) {
+  subtitleDelay.value = Math.max(-10, Math.min(10, subtitleDelay.value + amount));
+  
+  // Apply delay to current subtitle track
+  if (player.value && activeSubtitleTrack.value >= 0) {
+    // For ASS subtitles
+    const assPlugin = player.value.player_.ass;
+    if (assPlugin) {
+      assPlugin.delay = subtitleDelay.value;
+    }
+    
+    // For standard subtitles, we need to reload with the new delay
+    // This is a simplified approach - a more complete solution would
+    // need to modify the cue timing directly
+  }
+}
+
+// Add keyboard shortcut for sidebar toggle
+onMounted(() => {
+  window.addEventListener('keydown', (e) => {
+    // Toggle sidebar with 'S' key
+    if (e.key === 's' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      toggleSidebar();
+    }
+  });
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', (e) => {
+    if (e.key === 's' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      toggleSidebar();
+    }
+  });
+});
 </script>
 
 <template>
   <div 
-    class="video-container" 
-    :class="[`align-${props.videoAlignment || settings.videoAlignment || 'center'}`]"
-    @mousemove="handleMouseMove"
-    @mouseleave="isHovering = false"
+    class="player-container" 
+    :class="{ 'sidebar-active': sidebarActive }"
   >
-    <video 
-      ref="videoRef"
-      :src="videoSource"
-      class="video-element"
-      @timeupdate="handleTimeUpdate"
-      @durationchange="onDurationChange"
-      @play="isPlaying = true; emit('playing')"
-      @pause="isPlaying = false; emit('pause')"
-      @ended="onVideoEnded; emit('ended')"
-      @click="togglePlayPause"
-      @error="(e) => emit('error', new Error('Video playback error'))"
-      :style="{ objectPosition: videoAlignmentStyle }"
-    >
-      <track 
-        v-if="captionsUrl" 
-        kind="subtitles" 
-        :src="captionsUrl" 
-        label="Generated Subtitles" 
-        :default="true"
-      >
-    </video>
-
-    <!-- Update stacked subtitles container -->
-    <div class="subtitles-container" v-show="hasSubtitles || hasSecondarySubtitles">
-      <SubtitleComponent
-        :video-element="videoRef"
-        :subtitle-tracks="subtitleTracks"
-        :primary-track-index="primaryTrackIndex"
-        :secondary-track-index="secondaryTrackIndex"
-        :current-time="currentTime"
-        :show-primary-track="showPrimaryTrack"
-        :show-secondary-track="showSecondaryTrack"
-        :primary-font-size="settings.primaryFontSize"
-        :secondary-font-size="settings.secondaryFontSize"
-        :primary-font-family="settings.primaryFontFamily"
-        :secondary-font-family="settings.secondaryFontFamily"
-        :primary-font-weight="settings.primaryFontWeight"
-        :secondary-font-weight="settings.secondaryFontWeight"
-        :primary-text-color="settings.primaryTextColor"
-        :secondary-text-color="settings.secondaryTextColor"
-        :primary-background-color="settings.primaryBackgroundColor"
-        :secondary-background-color="settings.secondaryBackgroundColor"
-        :primary-text-shadow="settings.primaryTextShadow"
-        :secondary-text-shadow="settings.secondaryTextShadow"
+    <div class="video-wrapper">
+      <VideoJSPlayer
+        ref="player"
+        :src="videoSource"
+        :subtitles="subtitleTracks"
+        :width="1280"
+        :height="720"
+        :autoplay="false"
+        :controls="true"
+        :sidebar-active="sidebarActive"
+        :show-sidebar-toggle="true"
+        @ready="onPlayerReady"
+        @play="onPlay"
+        @pause="onPause"
+        @timeupdate="onTimeUpdate"
+        @ended="onEnded"
+        @error="onError"
         @word-click="handleWordClick"
+        @toggle-sidebar="toggleSidebar"
+      />
+      
+      <!-- Use the VideoControls component -->
+      <VideoControls 
+        v-if="(showControls || isHovering) && !controlsHidden"
+        :is-playing="isPlaying"
+        :current-time="currentTime"
+        :duration="videoDuration"
+        :volume="volume"
+        :is-muted="isMuted"
+        :is-fullscreen="isFullscreen"
+        :show-settings="showSettingsMenu"
+        @play="togglePlayPause()?.then(() => emit('playing'))"
+        @pause="togglePlayPause()?.then(() => emit('pause'))"
+        @seek="seek"
+        @volume-change="handleVolumeChange"
+        @toggle-mute="toggleMute"
+        @toggle-fullscreen="toggleFullscreen"
+        @toggle-settings="toggleSettingsMenu"
+        @toggle-captions="handleToggleCaptions($event)"
+        @subtitle-upload="handleSubtitleUpload"
+        @toggle-captions-panel="handleToggleCaptionsPanel($event)"
       />
     </div>
     
-    <!-- Use the VideoControls component -->
-    <VideoControls 
-      v-if="(showControls || isHovering) && !controlsHidden"
-      :is-playing="isPlaying"
-      :current-time="props.currentTime"
-      :duration="videoDuration"
-      :volume="volume"
-      :is-muted="isMuted"
-      :is-fullscreen="isFullscreen"
-      :show-settings="showSettingsMenu"
-      @play="togglePlayPause()?.then(() => emit('playing'))"
-      @pause="togglePlayPause()?.then(() => emit('pause'))"
-      @seek="seek"
-      @volume-change="handleVolumeChange"
-      @toggle-mute="toggleMute"
-      @toggle-fullscreen="toggleFullscreen"
-      @toggle-settings="toggleSettingsMenu"
-      @toggle-captions="handleToggleCaptions($event)"
-      @subtitle-upload="emit('subtitle-upload', $event)"
-      @toggle-captions-panel="handleToggleCaptionsPanel($event)"
-    />
+    <!-- Sidebar -->
+    <div v-if="sidebarActive" class="sidebar">
+      <div class="sidebar-header">
+        <h3>Subtitles</h3>
+        <button class="close-button" @click="toggleSidebar(false)">×</button>
+      </div>
+      
+      <div class="sidebar-content">
+        <!-- Subtitle tracks list -->
+        <div class="subtitle-tracks">
+          <h4>Available Tracks</h4>
+          <div 
+            v-for="(track, index) in subtitleTracks" 
+            :key="index"
+            class="subtitle-track-item"
+            :class="{ 'active': activeSubtitleTrack === index }"
+            @click="setActiveSubtitleTrack(index)"
+          >
+            <div class="track-info">
+              <div class="track-name">{{ track.label || track.language }}</div>
+              <div class="track-language">{{ track.language }}</div>
+            </div>
+            <div class="track-actions">
+              <button 
+                class="track-toggle" 
+                :class="{ 'active': activeSubtitleTrack === index }"
+                @click.stop="toggleSubtitleTrack(index)"
+              >
+                {{ activeSubtitleTrack === index ? 'Hide' : 'Show' }}
+              </button>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Upload new subtitle -->
+        <div class="upload-subtitle">
+          <h4>Add Subtitle</h4>
+          <div class="upload-controls">
+            <label class="upload-button">
+              Browse
+              <input 
+                type="file" 
+                accept=".srt,.vtt,.ass,.ssa" 
+                @change="handleSubtitleUpload($event.target.files[0])" 
+                hidden
+              >
+            </label>
+            <span class="upload-info">Supports SRT, VTT, ASS/SSA</span>
+          </div>
+        </div>
+        
+        <!-- Subtitle settings -->
+        <div class="subtitle-settings">
+          <h4>Settings</h4>
+          
+          <div class="setting-item">
+            <label>Font Size</label>
+            <div class="setting-controls">
+              <button @click="adjustFontSize(false)">-</button>
+              <span>{{ fontSize.toFixed(1) }}</span>
+              <button @click="adjustFontSize(true)">+</button>
+            </div>
+          </div>
+          
+          <div class="setting-item">
+            <label>Delay (seconds)</label>
+            <div class="setting-controls">
+              <button @click="adjustDelay(-0.1)">-</button>
+              <span>{{ subtitleDelay.toFixed(1) }}</span>
+              <button @click="adjustDelay(0.1)">+</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
     
-    <!-- Use the SettingsMenu component -->
+    <!-- Settings Menu component -->
     <SettingsMenu 
       :show="showSettingsMenu"
       @close="showSettingsMenu = false"
@@ -427,39 +463,190 @@ function handleWordClick(word: string, trackId: string) {
 /* Import the shared styles */
 @import '@/assets/css/video-player.css';
 
-.subtitles-container {
-  position: absolute;
-  bottom: 120px; /* Increased to give more space from controls */
-  left: 50%;
-  transform: translateX(-50%);
+.player-container {
+  display: flex;
   width: 100%;
-  text-align: center;
-  z-index: 2;
-  pointer-events: none;
+  height: 100%;
+  position: relative;
+  background-color: #000;
+}
+
+.video-wrapper {
+  flex: 1;
+  position: relative;
+  transition: width 0.3s ease;
+}
+
+/* Sidebar styles */
+.sidebar {
+  width: 350px;
+  background-color: #1a1a1a;
+  color: #fff;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
+  border-left: 1px solid #333;
+}
+
+.sidebar-header {
+  display: flex;
+  justify-content: space-between;
   align-items: center;
-  gap: 20px; /* Increased gap between subtitles */
+  padding: 15px;
+  border-bottom: 1px solid #333;
 }
 
-/* Remove these styles as they're now handled in SubtitleDisplay component */
-.subtitle-line {
-  background-color: rgba(0, 0, 0, 0.7);
-  padding: 5px 10px;
-  border-radius: 4px;
-  max-width: 80%;
-  margin: 0 auto;
-  font-size: 24px; /* Default larger font size */
-  line-height: 1.4;
+.sidebar-header h3 {
+  margin: 0;
+  font-size: 18px;
 }
 
-.subtitle-line.secondary {
-  color: #ccc;
-  font-size: 20px; /* Slightly smaller for secondary */
-}
-
-.subtitle-line.primary {
-  color: white;
+.close-button {
+  background: none;
+  border: none;
+  color: #fff;
   font-size: 24px;
+  cursor: pointer;
+}
+
+.sidebar-content {
+  padding: 15px;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.subtitle-tracks, .upload-subtitle, .subtitle-settings {
+  margin-bottom: 20px;
+}
+
+h4 {
+  margin: 0 0 10px 0;
+  font-size: 16px;
+  color: #ccc;
+}
+
+.subtitle-track-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px;
+  border-radius: 4px;
+  margin-bottom: 5px;
+  background-color: #2a2a2a;
+  cursor: pointer;
+}
+
+.subtitle-track-item:hover {
+  background-color: #333;
+}
+
+.subtitle-track-item.active {
+  background-color: #3a3a3a;
+  border-left: 3px solid #60a5fa;
+}
+
+.track-info {
+  flex: 1;
+}
+
+.track-name {
+  font-weight: 500;
+}
+
+.track-language {
+  font-size: 12px;
+  color: #aaa;
+}
+
+.track-actions {
+  display: flex;
+  gap: 5px;
+}
+
+.track-toggle {
+  background-color: #444;
+  border: none;
+  color: #fff;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.track-toggle:hover {
+  background-color: #555;
+}
+
+.track-toggle.active {
+  background-color: #60a5fa;
+}
+
+.upload-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.upload-button {
+  background-color: #60a5fa;
+  color: #fff;
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  display: inline-block;
+}
+
+.upload-button:hover {
+  background-color: #3b82f6;
+}
+
+.upload-info {
+  font-size: 12px;
+  color: #aaa;
+}
+
+.setting-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.setting-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.setting-controls button {
+  width: 30px;
+  height: 30px;
+  background-color: #444;
+  border: none;
+  color: #fff;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.setting-controls button:hover {
+  background-color: #555;
+}
+
+/* Responsive styles */
+@media (max-width: 768px) {
+  .player-container {
+    flex-direction: column;
+  }
+  
+  .sidebar {
+    width: 100%;
+    height: 300px;
+    border-left: none;
+    border-top: 1px solid #333;
+  }
 }
 </style>

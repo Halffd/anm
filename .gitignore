@@ -21,3 +21,10 @@ node_modules
 .cache
 .env
 dist
+logs
+log
+*.log
+*.ass
+*.srt
+*.vtt
+*.txt
