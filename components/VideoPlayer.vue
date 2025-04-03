@@ -13,6 +13,9 @@ import { useInputHandlers } from '~/composables/useInputHandlers'
 import { useVideoPlayer } from '~/composables/useVideoPlayer'
 import { useCaptionsControl } from '~/composables/useCaptionsControl'
 import { useVideoMetadata } from '~/composables/useVideoMetadata'
+import SubtitleDisplay from '~/components/SubtitleDisplay.vue'
+import SubtitleComponent from './SubtitleComponent.vue'
+import { parseAss, parseVtt, parseSrt } from '../utils/subtitleParsers'
 
 // Get utilities
 const { createKeyboardHandler } = useInputHandlers()
@@ -281,6 +284,58 @@ onMounted(() => {
 onUnmounted(() => {
   document.removeEventListener('fullscreenchange', onFullscreenChange)
 })
+
+// Add computed properties for tokens if they don't exist
+const activeTokens = computed(() => store.activeTokens || [])
+const secondaryActiveTokens = computed(() => store.secondaryActiveTokens || [])
+
+const primaryTrackIndex = ref(0)
+const secondaryTrackIndex = ref(1)
+const showPrimaryTrack = ref(true)
+const showSecondaryTrack = ref(true)
+const subtitleTracks = ref([])
+
+async function loadSubtitles() {
+  try {
+    // Load primary subtitle (Japanese)
+    const jpnResponse = await fetch('path/to/japanese.ass')
+    const jpnContent = await jpnResponse.text()
+    const jpnLines = parseAss(jpnContent)
+    
+    // Load secondary subtitle (English)
+    const engResponse = await fetch('path/to/english.srt')
+    const engContent = await engResponse.text()
+    const engLines = parseSrt(engContent)
+    
+    subtitleTracks.value = [
+      {
+        id: 'jpn',
+        language: 'Japanese',
+        lines: jpnLines,
+        format: 'ass',
+        delay: 0
+      },
+      {
+        id: 'eng',
+        language: 'English',
+        lines: engLines,
+        format: 'srt',
+        delay: 0
+      }
+    ]
+  } catch (error) {
+    console.error('Error loading subtitles:', error)
+  }
+}
+
+onMounted(() => {
+  loadSubtitles()
+})
+
+function handleWordClick(word: string, trackId: string) {
+  console.log(`Word clicked: ${word} from track: ${trackId}`)
+  // Implement dictionary lookup or other functionality
+}
 </script>
 
 <template>
@@ -311,6 +366,32 @@ onUnmounted(() => {
         :default="true"
       >
     </video>
+
+    <!-- Update stacked subtitles container -->
+    <div class="subtitles-container" v-show="hasSubtitles || hasSecondarySubtitles">
+      <SubtitleComponent
+        :video-element="videoRef"
+        :subtitle-tracks="subtitleTracks"
+        :primary-track-index="primaryTrackIndex"
+        :secondary-track-index="secondaryTrackIndex"
+        :current-time="currentTime"
+        :show-primary-track="showPrimaryTrack"
+        :show-secondary-track="showSecondaryTrack"
+        :primary-font-size="settings.primaryFontSize"
+        :secondary-font-size="settings.secondaryFontSize"
+        :primary-font-family="settings.primaryFontFamily"
+        :secondary-font-family="settings.secondaryFontFamily"
+        :primary-font-weight="settings.primaryFontWeight"
+        :secondary-font-weight="settings.secondaryFontWeight"
+        :primary-text-color="settings.primaryTextColor"
+        :secondary-text-color="settings.secondaryTextColor"
+        :primary-background-color="settings.primaryBackgroundColor"
+        :secondary-background-color="settings.secondaryBackgroundColor"
+        :primary-text-shadow="settings.primaryTextShadow"
+        :secondary-text-shadow="settings.secondaryTextShadow"
+        @word-click="handleWordClick"
+      />
+    </div>
     
     <!-- Use the VideoControls component -->
     <VideoControls 
@@ -345,4 +426,40 @@ onUnmounted(() => {
 <style scoped>
 /* Import the shared styles */
 @import '@/assets/css/video-player.css';
+
+.subtitles-container {
+  position: absolute;
+  bottom: 120px; /* Increased to give more space from controls */
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100%;
+  text-align: center;
+  z-index: 2;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px; /* Increased gap between subtitles */
+}
+
+/* Remove these styles as they're now handled in SubtitleDisplay component */
+.subtitle-line {
+  background-color: rgba(0, 0, 0, 0.7);
+  padding: 5px 10px;
+  border-radius: 4px;
+  max-width: 80%;
+  margin: 0 auto;
+  font-size: 24px; /* Default larger font size */
+  line-height: 1.4;
+}
+
+.subtitle-line.secondary {
+  color: #ccc;
+  font-size: 20px; /* Slightly smaller for secondary */
+}
+
+.subtitle-line.primary {
+  color: white;
+  font-size: 24px;
+}
 </style>

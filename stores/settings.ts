@@ -37,8 +37,8 @@ export const useSettingsStore = defineStore('settings', {
   state: (): Settings => ({
     videoAlignment: 'center',
     showVideoControls: true,
-    primarySubtitleFontSize: 1.8,
-    secondarySubtitleFontSize: 1.4,
+    primarySubtitleFontSize: 1.5,
+    secondarySubtitleFontSize: 1.2,
     subtitleFontFamily: 'Arial, sans-serif',
     secondarySubtitleFontFamily: 'Arial, sans-serif',
     subtitleFontWeight: 400,

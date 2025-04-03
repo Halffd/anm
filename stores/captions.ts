@@ -5,6 +5,17 @@ import { makeFurigana, tokenize } from '~/server/services/tokenizer'
 import { useFurigana } from '~/composables/useFurigana'
 import { shouldProcessFurigana } from '~/server/services/furigana'
 
+// Add Token interface at the top with other interfaces
+interface Token {
+  surface_form: string;
+  surface: string;
+  reading: string;
+  pos: string;
+  basic_form: string;
+  isHighlighted: boolean;
+  status?: 'new' | 'known' | 'mature';
+}
+
 export const useCaptionsStore = defineStore('captions', () => {
   // Multiple subtitle tracks support
   const subtitleTracks = ref<SubtitleTrack[]>([])
@@ -58,6 +69,32 @@ export const useCaptionsStore = defineStore('captions', () => {
     })
     
     return active
+  })
+
+  // Add computed property for secondary active captions
+  const secondaryActiveCaptions = computed(() => {
+    // Get captions from all non-active tracks that are currently active
+    return subtitleTracks.value
+      .filter((_, index) => index !== activeTrackIndex.value)
+      .flatMap(track => 
+        track.captions.filter(caption => {
+          const delay = secondarySubtitleDelay.value
+          const totalDelay = (caption.customOffset || 0) + delay
+          return caption.startTime <= (currentTime.value - totalDelay) && 
+                 (currentTime.value - totalDelay) <= caption.endTime
+        })
+      )
+  })
+
+  // Add these computed properties if they don't exist
+  const activeTokens = computed(() => {
+    const activeCaption = activeCaptions.value[0]
+    return activeCaption?.tokens || []
+  })
+
+  const secondaryActiveTokens = computed(() => {
+    const secondaryCaption = secondaryActiveCaptions.value[0]
+    return secondaryCaption?.tokens || []
   })
 
   // Add this function for cleaning subtitle text
@@ -245,98 +282,100 @@ export const useCaptionsStore = defineStore('captions', () => {
 
   async function loadCaptions(fileContent: string, language?: string, title?: string) {
     try {
+      // Parse the captions first
       let captions = parseCaptions(fileContent)
-      if (!captions) return
+      if (!captions || captions.length === 0) {
+        console.error('[Store] No captions parsed from content')
+        return
+      }
 
-      // Clean up captions
+      // Clean up title if it comes from filename
+      if (title) {
+        // Remove common patterns from filenames
+        title = title
+          .replace(/\[.*?\]/g, '') // Remove anything in brackets
+          .replace(/\.srt$|\.vtt$|\.ass$/i, '') // Remove extension
+          .trim()
+      }
+
+      // Set default language if not provided
+      language = language || 'jpn'
+
+      console.log(`[Store] Loading ${captions.length} captions with language: ${language}, title: ${title}`)
+
+      // Clean and process captions
       captions = captions.map(caption => ({
         ...caption,
-        text: cleanSubtitleText(caption.text)
+        text: cleanSubtitleText(caption.text),
+        tokens: [], // Initialize empty tokens array
       }))
 
       // Sort and merge
       sortCaptionsByTime(captions)
       captions = mergeDuplicates(captions)
 
-      const { processFurigana } = useFurigana()
-
-      console.log(`[Store] Processing furigana for ${captions.length} captions, language: ${language || 'unknown'}`)
-      
       // Add metadata to track
       const trackInfo = {
-        language: language || 'unknown',
+        language: language,
         title: title || `Track ${subtitleTracks.value.length + 1}`
       }
 
-      // Check if this track already exists (to prevent duplicates)
-      const isDuplicate = subtitleTracks.value.some(track => 
-        track.metadata.language === trackInfo.language && 
-        track.metadata.title === trackInfo.title &&
-        track.captions.length === captions.length
-      )
-
-      if (isDuplicate) {
-        console.warn(`[Store] Skipping duplicate subtitle track: ${trackInfo.language} - ${trackInfo.title}`)
-        return
-      }
-
-      // Process furigana and tokens for each caption
-      const processingPromises = captions.map(async (caption) => {
-        try {
-          // Check if text contains enough Japanese characters to warrant processing
-          if (shouldProcessFurigana(caption.text)) {
-            // Process furigana
-            const furiganaResult = await processFurigana(caption.text)
-            if (furiganaResult && furiganaResult.length > 0) {
-              // Convert from new format { text, furigana } to old format [text, furigana]
-              caption.furigana = furiganaResult.map(item => [
-                item.text, 
-                item.furigana || ''
-              ]) as Array<[string, string]>
-              console.log(`[Store] Furigana processed for caption: "${caption.text.substring(0, 30)}${caption.text.length > 30 ? '...' : ''}"`)
-            } else {
-              console.warn(`[Store] No furigana generated for caption: "${caption.text.substring(0, 30)}${caption.text.length > 30 ? '...' : ''}"`)
-            }
-            
-            // Process tokens for colored display
-            try {
-              const tokens = await tokenize(caption.text)
-              if (tokens && tokens.length > 0) {
-                caption.tokens = tokens
-                console.log(`[Store] Tokens processed for caption: "${caption.text.substring(0, 30)}${caption.text.length > 30 ? '...' : ''}"`)
-              }
-            } catch (tokenError) {
-              console.error(`[Store] Error processing tokens for caption: "${caption.text.substring(0, 30)}${caption.text.length > 30 ? '...' : ''}"`, tokenError)
-            }
-          } else {
-            console.log(`[Store] Skipping furigana for caption with insufficient Japanese characters: "${caption.text.substring(0, 30)}${caption.text.length > 30 ? '...' : ''}"`)
-          }
-        } catch (error) {
-          console.error(`[Store] Error processing caption: "${caption.text.substring(0, 30)}${caption.text.length > 30 ? '...' : ''}"`, error)
-        }
-      })
-      
-      // Wait for all processing to complete
-      await Promise.all(processingPromises)
-      
-      console.log(`[Store] Caption processing completed for all captions`)
-
-      // Add as a new track with metadata
+      // Add as a new track
+      const newTrackIndex = subtitleTracks.value.length
       subtitleTracks.value.push({
         id: crypto.randomUUID(),
         captions: captions,
         metadata: trackInfo
       })
-      
+
+      // Process tokens and furigana asynchronously
+      processCaptionsAsync(captions, newTrackIndex)
+
       // Set as active track if it's the first one
       if (subtitleTracks.value.length === 1) {
         activeTrackIndex.value = 0
       }
-      
-      return subtitleTracks.value.length - 1 // Return the index of the newly added track
+
+      return newTrackIndex
     } catch (error) {
       console.error(`[Store] Error loading captions:`, error)
       return null
+    }
+  }
+
+  // Separate async processing function
+  async function processCaptionsAsync(captions: Caption[], trackIndex: number) {
+    const { processFurigana } = useFurigana()
+
+    for (const caption of captions) {
+      try {
+        if (shouldProcessFurigana(caption.text)) {
+          // Process tokens first
+          try {
+            const tokens = await tokenize(caption.text)
+            if (tokens && tokens.length > 0) {
+              caption.tokens = tokens
+              // Force update the track to trigger reactivity
+              subtitleTracks.value[trackIndex] = { ...subtitleTracks.value[trackIndex] }
+            }
+          } catch (tokenError) {
+            console.error(`[Store] Error processing tokens:`, tokenError)
+          }
+
+          // Then process furigana
+          const furiganaResult = await processFurigana(caption.text)
+          if (furiganaResult && furiganaResult.length > 0) {
+            caption.furigana = furiganaResult.map(item => [
+              item.text,
+              item.furigana || ''
+            ])
+            // Force update again
+            subtitleTracks.value[trackIndex] = { ...subtitleTracks.value[trackIndex] }
+          }
+        }
+      } catch (error) {
+        console.error(`[Store] Error processing caption:`, error)
+      }
     }
   }
 
@@ -542,6 +581,32 @@ export const useCaptionsStore = defineStore('captions', () => {
     }
   }
 
+  // Add handler for word clicks if it doesn't exist
+  function handleWordClick(token: Token) {
+    // Handle word click logic here
+    // This might involve dictionary lookups, Anki export, etc.
+  }
+
+  const hasSubtitles = computed(() => {
+    const has = showSubtitles.value && allActiveCaptions.value.length > 0
+    console.log('[Debug] hasSubtitles:', has, 'activeCaptions:', allActiveCaptions.value.length)
+    return has
+  })
+
+  const hasSecondarySubtitles = computed(() => {
+    const has = subtitleTracks.value.some((track, index) => 
+      index !== activeTrackIndex.value && 
+      track.captions.some(caption => {
+        const delay = secondarySubtitleDelay.value
+        const totalDelay = (caption.customOffset || 0) + delay
+        return caption.startTime <= (currentTime.value - totalDelay) && 
+               (currentTime.value - totalDelay) <= caption.endTime
+      })
+    )
+    console.log('[Debug] hasSecondarySubtitles:', has)
+    return has
+  })
+
   return {
     captions,
     subtitleTracks,
@@ -583,5 +648,11 @@ export const useCaptionsStore = defineStore('captions', () => {
     customOffsets,
     adjustSubtitleDelay,
     setCustomOffset,
+    activeTokens,
+    secondaryActiveTokens,
+    secondaryActiveCaptions,
+    handleWordClick,
+    hasSubtitles,
+    hasSecondarySubtitles,
   }
 }) 
